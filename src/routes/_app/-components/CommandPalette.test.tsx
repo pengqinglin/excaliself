@@ -57,6 +57,8 @@ function makeDrawing(overrides: Partial<Drawing> & { id: string }): Drawing {
   return {
     name: `Drawing ${overrides.id}`,
     searchText: "",
+    serverManagedAt: null,
+    sceneRevision: 0,
     folderId: null,
     space: "private",
     createdBy: "user-1",

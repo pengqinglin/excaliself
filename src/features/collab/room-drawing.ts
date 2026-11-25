@@ -28,13 +28,14 @@ export async function resolveRoomForDrawing(
       space: drawings.space,
       createdBy: drawings.createdBy,
       deletedAt: drawings.deletedAt,
+      serverManagedAt: drawings.serverManagedAt,
     })
     .from(drawings)
     .where(eq(drawings.id, drawingId))
   if (
     !drawing ||
     !canAccess(drawing, user.id) ||
-    drawing.space !== "team" ||
+    (drawing.space !== "team" && !drawing.serverManagedAt) ||
     drawing.deletedAt !== null
   )
     return { status: "refused" }

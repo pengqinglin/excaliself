@@ -316,7 +316,22 @@ export function useSaveScenePayload(
       // Shared or moved to Team elsewhere: refetching the share and the
       // drawing flips this canvas to a Room, and joining it reconciles the
       // local scene.
-      if (result.status === "shared") {
+      if (result.status === "room-required") {
+        const { serverManagedAt, sceneRevision } = result
+        queryClient.setQueryData(
+          drawingQueryOptions(id).queryKey,
+          (drawing) =>
+            drawing && { ...drawing, serverManagedAt, sceneRevision },
+        )
+        queryClient.setQueryData(drawingsQueryOptions().queryKey, (rows) =>
+          rows?.map((drawing) =>
+            drawing.id === id
+              ? { ...drawing, serverManagedAt, sceneRevision }
+              : drawing,
+          ),
+        )
+      }
+      if (result.status === "shared" || result.status === "room-required") {
         await Promise.all([
           queryClient.invalidateQueries({
             queryKey: drawingShareQueryOptions(id).queryKey,
@@ -338,6 +353,7 @@ export function useSaveScenePayload(
         return {
           ...prev,
           data: payload.data,
+          sceneRevision: result.sceneRevision,
           updatedAt,
           files: payload.files.flatMap((file) => {
             if (overCap.has(file.fileId)) return []

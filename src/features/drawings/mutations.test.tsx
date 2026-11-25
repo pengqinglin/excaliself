@@ -38,6 +38,8 @@ function makeDrawing(id: string, updatedAt: Date): Drawing {
     id,
     name: `Drawing ${id}`,
     searchText: "",
+    serverManagedAt: null,
+    sceneRevision: 0,
     folderId: null,
     space: "private",
     createdBy: "user-1",

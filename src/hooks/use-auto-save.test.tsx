@@ -14,6 +14,7 @@ function Harness({
   onChangeRef,
   flushRef,
   savedRef,
+  holdRef,
   onError,
   paused = false,
   skipInitialChange = false,
@@ -23,11 +24,19 @@ function Harness({
   onChangeRef: { current: ((data: string) => void) | null }
   flushRef?: { current: (() => Promise<void>) | null }
   savedRef?: { current: boolean }
+  holdRef?: {
+    current:
+      | (() => {
+          drained: Promise<void>
+          release: (savePending?: boolean) => void
+        })
+      | null
+  }
   onError?: (error: unknown) => void
   paused?: boolean
   skipInitialChange?: boolean
 }) {
-  const { handleChange, flush, saved } = useAutoSave<string, string>({
+  const { handleChange, flush, saved, hold } = useAutoSave<string, string>({
     toPayload: (d) => d,
     getSignature: (p) => p,
     onSave: async (payload) =>
@@ -39,8 +48,65 @@ function Harness({
   onChangeRef.current = handleChange
   if (flushRef) flushRef.current = flush
   if (savedRef) savedRef.current = saved
+  if (holdRef) holdRef.current = hold
   return null
 }
+
+test("a handoff hold cancels queued saves, drains issued saves and records later edits", async () => {
+  vi.useFakeTimers()
+  let resolve = () => {}
+  const onSave = vi.fn(
+    () =>
+      new Promise<void>((done) => {
+        resolve = done
+      }),
+  )
+  const onChangeRef = { current: null as ((data: string) => void) | null }
+  const holdRef = {
+    current: null as
+      | (() => {
+          drained: Promise<void>
+          release: (savePending?: boolean) => void
+        })
+      | null,
+  }
+  render(
+    <Harness onSave={onSave} onChangeRef={onChangeRef} holdRef={holdRef} />,
+    { wrapper },
+  )
+  act(() => onChangeRef.current?.("first"))
+  await act(async () => vi.advanceTimersByTime(300))
+  act(() => onChangeRef.current?.("queued"))
+  const held = holdRef.current?.()
+  act(() => onChangeRef.current?.("latest"))
+  await act(async () => {
+    resolve()
+    await held?.drained
+    vi.advanceTimersByTime(500)
+  })
+  expect(onSave).toHaveBeenCalledTimes(1)
+  await act(async () => held?.release())
+  expect(onSave).toHaveBeenLastCalledWith("latest")
+  resolve()
+  vi.useRealTimers()
+})
+
+test("pausing before a queued debounce fires prevents the save even on unmount", async () => {
+  vi.useFakeTimers()
+  const onSave = vi.fn(async () => {})
+  const onChangeRef = { current: null as ((data: string) => void) | null }
+  const view = render(<Harness onSave={onSave} onChangeRef={onChangeRef} />, {
+    wrapper,
+  })
+  act(() => onChangeRef.current?.("queued"))
+  view.rerender(<Harness onSave={onSave} onChangeRef={onChangeRef} paused />)
+  await act(async () => {
+    vi.advanceTimersByTime(500)
+    view.unmount()
+  })
+  expect(onSave).not.toHaveBeenCalled()
+  vi.useRealTimers()
+})
 
 // Regression: unmounting inside the debounce window used to lose the pending
 // edit — useDebounceCallback's own cleanup cancelled it before the flush ran.

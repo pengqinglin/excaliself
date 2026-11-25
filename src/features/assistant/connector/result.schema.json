@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["completed", "awaiting_input", "failed"]
+    },
+    "body": { "type": "string", "minLength": 1, "maxLength": 10000 }
+  },
+  "required": ["kind", "body"],
+  "additionalProperties": false
+}

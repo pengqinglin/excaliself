@@ -1,0 +1,162 @@
+---
+title: "AI assistant: work with Codex on a drawing"
+description: Send private instructions from an existing drawing, pause or continue Codex, and keep background work running after you close the page.
+---
+
+Open a drawing and choose **AI assistant**. Describe a change, send follow-up
+instructions, and pause, continue or cancel the task from the panel. Codex edits
+the existing drawing and each saved change gets a receipt you can review or revert.
+
+Your conversation and task controls are private to your account. The resulting
+drawing edits are visible to anyone who can access that drawing. A private drawing
+stays private; starting an assistant task does not create a share link.
+
+## Start the Codex connector
+
+The connector runs continuously on your computer or a server. It uses your Codex
+CLI login and talks to Excaliself over MCP. The Excaliself application needs no
+model API key. A connected MCP server alone does not start Codex; the connector
+receives tasks and launches it.
+
+1. On the connector machine, install Node.js 22, pnpm 11.14.0 and the
+   [Codex CLI](https://developers.openai.com/codex/cli/). The connector targets
+   Codex CLI 0.160.0 and uses `exec --json`, `resume` and HTTP MCP. The CLI arguments
+   and connector protocol are verified; remote model execution requires your login.
+2. Run `codex login` as the user who will run the connector. Keep the Codex model
+   configuration you normally use.
+3. Check out the same Excaliself source version as your application and install
+   its dependencies with `pnpm install --frozen-lockfile`.
+4. In Excaliself, open **Settings → MCP** and create a personal access token.
+   This token acts as your member account.
+5. From the checkout, set the instance address and token, then start the connector.
+   The following commands use Bash; paste the token after `read` and press Enter.
+   Its input is hidden.
+
+```bash
+export EXCALISELF_URL='https://draw.example.com'
+read -rs EXCALISELF_TOKEN
+export EXCALISELF_TOKEN
+pnpm assistant:codex
+```
+
+The connector also accepts an address ending in `/api/mcp`. Its status appears in
+**Settings → MCP** and the drawing's assistant panel. Leave the process running,
+or run it as a service as described below. The application image runs the web app;
+the connector runs separately from its source checkout.
+
+## Work on an existing drawing
+
+1. Open the drawing and choose **AI assistant** (also in the editor menu on a
+   narrow screen).
+2. Send an instruction, for example “Add a cache between the API and database,
+   using the same colors as the existing diagram.”
+3. The first send saves and hands the current scene to the server. You can
+   continue editing while Codex works. Unrelated edits are preserved; if the
+   shapes Codex planned to change have moved on, it must read them again.
+4. Follow the message and task statuses. **Message saved** means Excaliself has
+   stored your instruction. **Received by Codex** means its connector confirmed
+   it. **Saved to the drawing** identifies a committed drawing operation.
+5. Reply if Codex asks a question. A new instruction updates the current task
+   and interrupts the old execution so it can work from your latest input.
+
+You can close the panel, switch drawings or close the browser. A running connector
+continues the task. Reopening the panel restores your conversation and receipts.
+If the connector is offline, instructions stay queued in PostgreSQL.
+
+Private drawings used with the assistant remain server-managed afterwards.
+Background color and grid settings then synchronize with the drawing's other
+participants; theme, selection and viewport stay local to each browser.
+Stopping a share link removes that link's access while the owner keeps editing
+through the private Room. Team drawings keep their existing access rules.
+
+If the handoff reports that another tab saved newer changes, copy any local work
+you want to keep before using **Reload drawing**. The page pauses automatic
+saving so it cannot overwrite the newer scene.
+
+## Pause, continue and cancel
+
+**Pause** blocks later drawing commits as soon as the server accepts it. The
+panel shows that stopping is in progress until the connector confirms it has
+stopped the execution. An edit committed before the pause remains saved.
+**Continue** lets the connector pick up the latest instructions again.
+
+**Cancel task** ends the task. Saved drawing changes have their own receipts and
+can be reverted. Moving a drawing or its folder to Trash also cancels its tasks.
+Restoring the drawing lets you start a new task; it does not restart the old one.
+
+**Task completed** is Codex's final response. Drawing persistence is indicated by
+the saved-operation cards, which are recorded with the scene in PostgreSQL.
+
+## Revert a saved change
+
+Choose **Revert** on an operation card. It restores only that operation's affected
+shapes, labels, connectors and settings. Reverting also pauses the current task,
+so you can decide the next instruction before Codex continues.
+
+Revert is available for 30 days while the affected content is unchanged. If
+someone changed it afterwards, the operation is refused without changing the
+drawing. Unrelated changes remain. A reversal gets its own saved receipt; that
+receipt has no further revert button. Use the panel to revert assistant edits;
+the editor's ordinary undo history handles your local edits.
+
+Images needed by an operation's reversal are retained during this window. The
+normal drawing image budget still applies to those retained bytes.
+
+## Run continuously with systemd
+
+The repository includes
+[`docs/examples/excaliself-codex.service`](https://github.com/maciekzygmunt/excaliself/blob/main/docs/examples/excaliself-codex.service)
+and an environment-file example. Run a user service under the same account used
+for `codex login`:
+
+1. Put the environment file at `~/.config/excaliself-codex.env`, fill in the URL
+   and personal token, and set its permissions to `600`.
+2. Copy the service file to `~/.config/systemd/user/excaliself-codex.service`.
+   Set `WorkingDirectory` to your checkout and adjust `ExecStart` or the service's
+   PATH to the installed pnpm and Node 22 paths. Systemd does not load shell profiles.
+3. Run:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now excaliself-codex
+journalctl --user -u excaliself-codex -f
+```
+
+If the service should survive logging out of the connector machine, enable user
+lingering with `loginctl enable-linger "$USER"` (your administrator may need to
+enable it). The service's stop timeout allows the connector to terminate Codex
+and finish its local journal.
+
+## Connector settings and recovery
+
+These variables belong to the **connector process**, not the application container:
+
+| Variable | Meaning |
+| --- | --- |
+| `EXCALISELF_URL` | Required instance address, or its `/api/mcp` endpoint |
+| `EXCALISELF_TOKEN` | Required personal access token |
+| `EXCALISELF_CONNECTOR_STATE_DIR` | Optional dedicated state directory; default is under `$XDG_STATE_HOME/excaliself-codex/`, or `~/.local/state/excaliself-codex/`, grouped by endpoint |
+| `EXCALISELF_CODEX_BIN` | Optional path to the Codex executable; default `codex` |
+| `EXCALISELF_CODEX_MODEL` | Optional model override; otherwise uses Codex's configuration |
+| `EXCALISELF_CODEX_TIMEOUT_MS` | Per-execution limit in milliseconds; default `1800000` (30 minutes) |
+
+Keep one state directory for each member and endpoint. The directory holds a
+persistent connector identity, Codex thread references and any final response
+whose delivery is not yet confirmed. It contains conversation results, so keep
+its private file permissions. The token is not stored there. A second process
+cannot use the same state directory concurrently.
+
+After a forced stop, a new execution instance waits for an outstanding lease to
+expire (up to 60 seconds). Old executions cannot write after their lease expires
+or another instance claims a newer generation. A saved but unconfirmed final
+response is replayed with its original request identity. If Codex's native thread
+files are unavailable, the connector starts again from the database conversation
+and saved-operation context.
+
+Revoking the Excaliself token stops that connector and releases its unfinished
+work for a replacement credential. Create a replacement token and restart the
+service. The web application continues to require **one application process**
+for its authoritative Rooms; persistent tasks do not add multi-replica Room support.
+
+For application backups, see [Backup and restore](/docs/backup-restore/). Preview
+mode uses in-memory data and loses tasks, conversations and scenes on restart.

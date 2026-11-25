@@ -134,6 +134,41 @@
       "when": 1794158495285,
       "tag": "0018_comments",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795587146056,
+      "tag": "0019_assistant_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795589196602,
+      "tag": "0020_server_managed_drawings",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795591849477,
+      "tag": "0021_assistant_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795592227508,
+      "tag": "0022_assistant_workers",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795595522115,
+      "tag": "0023_assistant_reverts",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,10 @@
 // Room wire protocol: plain JSON, no E2E envelope. Hand-written guards, not a
 // schema library, to keep cursor parsing cheap and the guest bundle small.
+import {
+  parseSceneSettings,
+  type SettingsState,
+  type SettingsUpdate,
+} from "./scene-settings"
 
 export const ROOM_TOPIC = "room"
 
@@ -61,6 +66,7 @@ export type ClientMessage =
   | { type: "MOUSE_LOCATION"; payload: PointerUpdate }
   /** A delta of changed elements. */
   | { type: "SCENE_UPDATE"; payload: { elements: SceneElement[] } }
+  | { type: "SCENE_STATE"; payload: SettingsUpdate }
   /** Who this tab is following now; null when it stopped. */
   | { type: "USER_FOLLOW"; payload: { followedConnectionId: string | null } }
   /** Sent only while someone is following this tab. */
@@ -79,7 +85,11 @@ export type ServerMessage =
       payload: PointerUpdate & { connectionId: string }
     }
   /** The Room's whole scene, once per join. */
-  | { type: "SCENE_INIT"; payload: { elements: SceneElement[] } }
+  | {
+      type: "SCENE_INIT"
+      payload: { elements: SceneElement[]; settings?: SettingsState }
+    }
+  | { type: "SCENE_STATE"; payload: SettingsState }
   /** Changed elements; the Room's copy wherever the incoming one lost. */
   | { type: "SCENE_UPDATE"; payload: { elements: SceneElement[] } }
   /** Who is following this tab. */
@@ -220,6 +230,28 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return { type: "SCENE_UPDATE", payload }
   }
 
+  if (decoded.type === "SCENE_STATE") {
+    if (!isRecord(decoded.payload)) return null
+    const { baseRevision, requestId } = decoded.payload
+    const appState = parseSceneSettings(decoded.payload.appState)
+    if (
+      !appState ||
+      !Number.isSafeInteger(baseRevision) ||
+      Number(baseRevision) < 0 ||
+      !Number.isSafeInteger(requestId) ||
+      Number(requestId) <= 0
+    )
+      return null
+    return {
+      type: "SCENE_STATE",
+      payload: {
+        appState,
+        baseRevision: Number(baseRevision),
+        requestId: Number(requestId),
+      },
+    }
+  }
+
   if (decoded.type === "USER_FOLLOW") {
     if (!isRecord(decoded.payload)) return null
     const followedConnectionId = decoded.payload.followedConnectionId
@@ -306,8 +338,25 @@ export function parseServerMessage(raw: string): ServerMessage | null {
     const scene = parseSceneMessage(payload)
     if (!scene) return null
     return decoded.type === "SCENE_INIT"
-      ? { type: "SCENE_INIT", payload: scene }
+      ? {
+          type: "SCENE_INIT",
+          payload: {
+            ...scene,
+            ...(parseSettingsState(payload.settings)
+              ? {
+                  settings: parseSettingsState(
+                    payload.settings,
+                  ) as SettingsState,
+                }
+              : {}),
+          },
+        }
       : { type: "SCENE_UPDATE", payload: scene }
+  }
+
+  if (decoded.type === "SCENE_STATE") {
+    const state = parseSettingsState(payload)
+    return state ? { type: "SCENE_STATE", payload: state } : null
   }
 
   if (decoded.type === "FOLLOWED_BY") {
@@ -327,4 +376,25 @@ export function parseServerMessage(raw: string): ServerMessage | null {
   }
 
   return null
+}
+
+function parseSettingsState(value: unknown): SettingsState | null {
+  if (!isRecord(value)) return null
+  const appState = parseSceneSettings(value.appState)
+  if (
+    !appState ||
+    !Number.isSafeInteger(value.revision) ||
+    Number(value.revision) < 0
+  )
+    return null
+  return {
+    appState,
+    revision: Number(value.revision),
+    ...(Number.isSafeInteger(value.requestId)
+      ? {
+          requestId: Number(value.requestId),
+          accepted: value.accepted === true,
+        }
+      : {}),
+  }
 }

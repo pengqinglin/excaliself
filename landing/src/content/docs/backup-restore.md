@@ -3,9 +3,17 @@ title: Backup and restore
 description: One Postgres dump backs up the whole instance.
 ---
 
-Everything is in the one Postgres database: accounts, drawings, images, and
-share links. One dump backs up the whole instance. Also keep a copy of your
+Application data is in the one Postgres database: accounts, drawings, images,
+share links, private assistant conversations, tasks, events and operation receipts.
+One dump backs up the instance. Also keep a copy of your
 `.env`.
+
+The separate [Codex connector](/docs/ai-assistant/) keeps a private local state
+directory with its identity, thread references and unconfirmed final reports.
+Back that up separately if you run it, along with Codex's native session state
+when you want to preserve those threads. Run one copy of a restored connector
+state directory. The full conversation and committed drawing operations remain
+in the application database.
 
 ## Back up
 

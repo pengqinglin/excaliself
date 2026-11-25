@@ -6,8 +6,12 @@ import { z } from "zod"
 import { db } from "@/db"
 import { drawingFiles, drawings, spaces, stars } from "@/db/schema"
 import { userDisplayName } from "@/features/account/display-name"
+import { withDrawingTransition } from "@/features/collab/drawing-transition"
 import { endTrashedRooms, rooms } from "@/features/collab/room-registry"
-import { roomElements } from "@/features/collab/room-session"
+import {
+  markRoomServerManaged,
+  roomElements,
+} from "@/features/collab/room-session"
 import { accessibleTo } from "@/features/spaces/access"
 import { restoreDrawingUnit } from "@/features/trash/restore"
 import { trashDrawingUnit } from "@/features/trash/trash"
@@ -21,6 +25,23 @@ import { drawingColumns, MAX_NAME_LENGTH } from "./list-columns"
 import { importDrawing, sceneContentSchema } from "./scene-import"
 import { writeDrawingScene } from "./scene-write"
 import { updateDrawingFields } from "./update"
+import { activateServerWriter, activateWriterInput } from "./writer-mode"
+
+export const prepareDrawingServerWriter = createServerFn({ method: "POST" })
+  .middleware([authMiddleware, listsChangedMiddleware])
+  .validator(activateWriterInput)
+  .handler(({ data, context }) =>
+    withDrawingTransition(data.id, async () => {
+      const result = await activateServerWriter(
+        db,
+        context.session.user.id,
+        data,
+      )
+      if (result.status === "activated")
+        await markRoomServerManaged(rooms, data.id)
+      return result
+    }),
+  )
 
 export const getDrawings = createServerFn({ method: "GET" })
   .middleware([authMiddleware])

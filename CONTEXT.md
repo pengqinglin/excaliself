@@ -42,10 +42,10 @@ The Gallery's filter chrome on All drawings: on-page search (the app's only inli
 A non-interactive visual rendering of a Drawing's scene, shown on Gallery cards so drawings are recognizable by shape rather than name.
 
 ### Room
-The live collaboration session around one shared or Team Drawing. Exists only while at least one participant (member or guest) is connected; holds the authoritative scene while live. There is at most one Room per Drawing. Guests enter through a Share link; members open a Team Drawing and enter by its id, with no link.
+The authoritative scene of one shared, Team, or server-managed Private Drawing. There is at most one Room per Drawing. Participants keep it live; a background assistant command can also hold a temporary Room without a socket. An empty written Room is released. Guests enter through a Share link; members enter Team or server-managed drawings by id under their existing access rule.
 
 ### Handoff
-The swap of who owns a Drawing's stored data. An unshared Private Drawing is written directly by its Creator's canvas (autosave); the moment a Share link exists, or the Drawing moves to Team, the Room becomes the only writer, every tab edits through the socket, and the server refuses direct writes. Stopping sharing hands a Private Drawing back. A Team Drawing never hands back to a solo writer: it is always a Room, a Room of one when only one member has it open (ADR 0002). Both directions flush before they let go, so no edit lives only in the writer being retired.
+The swap of who owns a Drawing's stored data. An unshared Private Drawing starts with its Creator's autosave; sharing or moving to Team gives its Room the writing role. Starting an Assistant task first commits the final solo snapshot and permanently marks the Drawing server-managed, using a scene revision check and atomic image storage. Old solo saves are then refused. Stopping sharing hands back only an ordinary unpromoted Private Drawing. Team and server-managed Drawings keep their Room writer (ADR 0002 and ADR 0004).
 
 ### Share link
 The one live edit link a Drawing can have (`/share/<token>`), minted and managed by the owner from the Share dialog. "Shared" is derived — a Drawing is shared iff its link exists; stopping sharing deletes it, regenerating replaces the token (old URL dies). Carries an Audience: `members` (any signed-in member of this instance, the default) or `anyone` (no account needed). A link whose token, Audience, or Drawing no longer checks out is dead — every dead link looks identical, revealing nothing about whether the Drawing exists.
@@ -75,7 +75,7 @@ An image on a Drawing's canvas, stored as bytes under a content-addressed file i
 The instance's one set of reusable shapes and icons, shown in the editor's Library panel in every Drawing, Private or Team. Every member sees and edits the same items, stored on the server; a member's add or remove reaches teammates' open editors live. Guests on a Share link neither see nor change it. Not tied to the Team Space despite the name: it is the team's, not a Space's.
 
 ### Access token
-A secret a member makes under Settings so their own AI client can use the instance over MCP (`/api/mcp`). It acts as that member under the same Space rule: it can find, read, and create Drawings, create folders, and move Drawings between folders of one Space. It never writes a Drawing's scene: it makes a Proposal, which only the member's Apply writes. It can read and write Comments directly, marked with its name. It never deletes anything for good. Shown once, when made. Revoking it, or deleting its member, ends it at once. Not a Share link: it opens no Room and has no Audience.
+A secret a member makes under Settings so their own AI client can use the instance over MCP (`/api/mcp`). It acts as that member under the Space rule. Ordinary drawing edits create Proposals for the member's Apply; member-started Assistant tasks authorize fenced background commits through the Room. It can also read and write Comments and manage the member's accessible items. Shown once, when made. Revoking it ends access immediately and releases its unfinished task leases. It opens no Share link and has no Audience.
 
 ### Connected app
 An AI client, such as a Claude.ai connector, that a member let in through OAuth instead of an Access token: the client asks, the member signs in and clicks Allow. Same access and same limits as an Access token. Listed beside the tokens in Settings, where the member disconnects it; disconnecting, or deleting its member, ends it at once.
@@ -85,6 +85,18 @@ A change to a Drawing's scene that an AI client asks for (Access token or Connec
 
 ### Comment thread
 A conversation pinned to one Anchor on one Drawing: open or resolved. Exists while it holds at least one Comment. Lives beside the scene, never in it, so it never touches the Room, autosave, undo, exports, or the `.excalidraw` file. Whoever can see the Drawing can read, start, reply to, resolve, and reopen its threads; guests on a Share link see none.
+
+### Assistant conversation
+A persistent private conversation for one member and one Drawing. Other members and guests see its resulting drawing edits under normal access, but never its messages or controls. Closing a page does not end it. Clients authenticated as that member can act on it.
+
+### Assistant task
+One unfinished execution in an Assistant conversation, started by a member's instruction. A durable control version and a 60-second generation-fenced lease coordinate the Codex connector. A new instruction interrupts the old execution; Pause fences later writes; Trash cancels the task. Completed means a final response was recorded, not that a drawing write occurred.
+
+### Operation receipt
+The immutable before/after payload of a committed assistant drawing edit, stored in the same transaction as the scene and its private event. Request IDs make retries idempotent. A member can reverse their operation within 30 days if the affected revisions/settings still match. The reversal is a new receipt and atomically pauses that conversation's active task; unrelated human edits remain.
+
+### Codex connector
+A continuously running process that polls MCP as one member, executes Codex CLI with that member's login, independently renews task leases and watches controls. Its private local journal retains a persistent machine identity, per-conversation Codex thread references and unconfirmed reports. Each process adds a distinct execution instance to its worker ID so a restarted connector cannot reuse an orphan's active lease.
 
 ### Comment
 One plain-text message in a Comment thread, by one member (or their AI client, shown as "via" its name). The first one opens the thread. Only its author edits or deletes it.

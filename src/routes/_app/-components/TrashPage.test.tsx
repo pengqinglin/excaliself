@@ -129,6 +129,8 @@ function makeTrashedDrawing(
   return {
     name: `Drawing ${overrides.id}`,
     searchText: "",
+    serverManagedAt: null,
+    sceneRevision: 0,
     folderId: null,
     space: "private",
     createdBy: "user-1",

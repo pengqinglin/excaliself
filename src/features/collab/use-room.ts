@@ -31,6 +31,7 @@ import {
   SCENE_UNREADABLE_CLOSE_CODE,
 } from "./protocol"
 import { type RoomPath, roomSocketUrl } from "./room-url"
+import { createSettingsSync } from "./scene-settings"
 import {
   createSceneBroadcaster,
   SYNC_FULL_SCENE_INTERVAL_MS,
@@ -138,6 +139,17 @@ export function useRoom(options: {
     return true
   }, [])
 
+  const settingsRef = useRef<ReturnType<typeof createSettingsSync> | null>(null)
+  if (!settingsRef.current)
+    settingsRef.current = createSettingsSync(
+      (payload) => send({ type: "SCENE_STATE", payload }),
+      (appState) =>
+        apiRef.current?.updateScene({
+          appState,
+          captureUpdate: CaptureUpdateAction.NEVER,
+        }),
+    )
+
   const isBackedUp = useCallback(
     () => (socketRef.current?.bufferedAmount ?? 0) > BACKPRESSURE_BYTES,
     [],
@@ -181,10 +193,11 @@ export function useRoom(options: {
   const onChange = useCallback(
     (
       elements: readonly OrderedExcalidrawElement[],
-      _appState: unknown,
+      appState: unknown,
       files: BinaryFiles,
     ) => {
       uploadPending(elements, files)
+      settingsRef.current?.observe(appState)
       if (!sceneInitializedRef.current) return
       const delta = broadcasterRef.current.delta(elements)
       if (delta && sendScene(delta)) queueFullSync()
@@ -229,6 +242,7 @@ export function useRoom(options: {
     }
     broadcasterRef.current = createSceneBroadcaster()
     sceneInitializedRef.current = false
+    settingsRef.current?.disconnect()
   }, [setRoster])
 
   // Dial only once the canvas exists, so SCENE_INIT has somewhere to land.
@@ -291,6 +305,8 @@ export function useRoom(options: {
             return
 
           case "SCENE_INIT": {
+            if (message.payload.settings)
+              settingsRef.current?.receive(message.payload.settings)
             const merged = applyRemoteScene(message.payload.elements)
             if (!merged) return
             sceneInitializedRef.current = true
@@ -298,6 +314,10 @@ export function useRoom(options: {
               queueFullSync()
             return
           }
+
+          case "SCENE_STATE":
+            settingsRef.current?.receive(message.payload)
+            return
 
           case "SCENE_UPDATE":
             applyRemoteScene(message.payload.elements)

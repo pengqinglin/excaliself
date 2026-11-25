@@ -22,6 +22,7 @@ import {
   MAX_ROOM_PARTICIPANTS,
   MAX_ROOM_SCENE_BYTES,
   MAX_SEAT_BUFFERED_BYTES,
+  markRoomServerManaged,
   moveRoomToTeam,
   PARTICIPANT_IDLE_TIMEOUT_MS,
   ROOM_FLUSH_INTERVAL_MS,
@@ -35,6 +36,7 @@ import {
   terminateRoom,
   trashRoom,
 } from "./room-session"
+import { DEFAULT_SCENE_SETTINGS } from "./scene-settings"
 
 const ROOM = "drawing-1"
 
@@ -1730,6 +1732,89 @@ test("a stopped link sends only the guests out of a Team drawing's room", async 
   expect(ada.closes).toEqual([])
   expect(grace.closes).toEqual([LINK_DEAD])
   expect(registry.rooms.get(ROOM)?.seats.size).toBe(1)
+})
+
+test("a promoted Private Room survives link revocation and removes signed-in share-only visitors", async () => {
+  const registry = emptyRegistry(async () => ({
+    elements: [],
+    access: { space: "private", createdBy: "u:Ada" },
+    readable: true,
+  }))
+  const owner = fakePeer("owner")
+  const memberVisitor = fakePeer("member-visitor")
+  const oldGuest = fakePeer("old-guest")
+  const newGuest = fakePeer("new-guest")
+  await joinRoom(registry, ROOM, owner, member("Ada"))
+  await joinRoom(registry, ROOM, memberVisitor, {
+    ...member("Nina"),
+    shareKey: "old",
+  })
+  await joinRoom(registry, ROOM, oldGuest, { ...guest, shareKey: "old" })
+  await markRoomServerManaged(registry, ROOM)
+  await joinRoom(registry, ROOM, newGuest, { ...guest, shareKey: "new" })
+  await endLinkRoom(registry, ROOM, "old")
+  expect(owner.closes).toEqual([])
+  expect(memberVisitor.closes).toEqual([LINK_DEAD])
+  expect(oldGuest.closes).toEqual([LINK_DEAD])
+  expect(newGuest.closes).toEqual([])
+  expect(registry.rooms.get(ROOM)?.serverManaged).toBe(true)
+  expect([...(registry.rooms.get(ROOM)?.seats.keys() ?? [])]).toEqual([
+    "owner",
+    "new-guest",
+  ])
+})
+
+test("server-managed settings compare revisions and persist on last leave", async () => {
+  const save = vi.fn(async () => {})
+  const registry = registryFrom(
+    async () => ({
+      elements: [],
+      readable: true,
+      access: { space: "private", createdBy: "u:Ada" },
+      serverManaged: true,
+      settings: DEFAULT_SCENE_SETTINGS,
+    }),
+    save,
+  )
+  const owner = fakePeer("owner")
+  await joinRoom(registry, ROOM, owner, member("Ada"))
+  expect(owner.sent.at(-1)).toMatchObject({
+    type: "SCENE_INIT",
+    payload: { settings: { revision: 0 } },
+  })
+  const settings = { ...DEFAULT_SCENE_SETTINGS, viewBackgroundColor: "#eeeeee" }
+  await receiveFromPeer(
+    registry,
+    ROOM,
+    owner,
+    JSON.stringify({
+      type: "SCENE_STATE",
+      payload: { appState: settings, baseRevision: 0, requestId: 1 },
+    }),
+  )
+  expect(owner.sent.at(-1)).toMatchObject({
+    type: "SCENE_STATE",
+    payload: { accepted: true, revision: 1 },
+  })
+  await receiveFromPeer(
+    registry,
+    ROOM,
+    owner,
+    JSON.stringify({
+      type: "SCENE_STATE",
+      payload: {
+        appState: DEFAULT_SCENE_SETTINGS,
+        baseRevision: 0,
+        requestId: 2,
+      },
+    }),
+  )
+  expect(owner.sent.at(-1)).toMatchObject({
+    type: "SCENE_STATE",
+    payload: { accepted: false, revision: 1, appState: settings },
+  })
+  await leaveRoom(registry, ROOM, owner)
+  expect(save).toHaveBeenCalledWith(ROOM, [], settings)
 })
 
 // Story 25: a guest on an anyone link stays through a move to Team, and the

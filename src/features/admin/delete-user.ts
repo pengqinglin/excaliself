@@ -5,7 +5,7 @@
 
 import { and, count, eq, or } from "drizzle-orm"
 import type { Db } from "@/db"
-import { drawings, folders, shares, users, verifications } from "@/db/schema"
+import { drawings, folders, users, verifications } from "@/db/schema"
 import { inPrivateSpaceOf } from "@/features/spaces/access"
 
 /** What both delete confirms state: the Private rows destroyed, the Team drawings kept. */
@@ -49,12 +49,11 @@ export async function countOwnedContent(
   }
 }
 
-/** The user's shared Private drawings, whose live rooms must close on delete. */
+/** All Private drawing IDs: server-managed Rooms can exist without share rows. */
 export async function sharedDrawingIds(db: Db, userId: string) {
   const rows = await db
     .select({ id: drawings.id })
     .from(drawings)
-    .innerJoin(shares, eq(shares.drawingId, drawings.id))
     .where(inPrivateSpaceOf(drawings, userId))
   return rows.map((row) => row.id)
 }

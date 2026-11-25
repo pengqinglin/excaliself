@@ -1,5 +1,6 @@
 import { beforeEach, expect, test, vi } from "vitest"
 import { resolveRoomForToken } from "./room-token"
+import { shareKey } from "./share-key"
 
 const { getSession, resolveShareForRoom } = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -36,6 +37,7 @@ test("a member joins the drawing's room under their session name", async () => {
       sessionId: "session-ada",
       displayName: "Ada Lovelace",
       image: "https://idp.example/ada.png",
+      shareKey: shareKey("token"),
     },
   })
 })
@@ -49,6 +51,7 @@ test("a guest joins an anyone link with no identity of its own", async () => {
       sessionId: null,
       displayName: null,
       image: null,
+      shareKey: shareKey("token"),
     },
   })
 })

@@ -1,10 +1,15 @@
 ---
 title: "Excaliself MCP: connect Claude and other AI clients"
-description: Let Claude.ai, Claude Code, Claude Desktop, and other MCP clients find, read, create, import, change, export, comment on, and trash drawings, with every drawing change applied only by you.
+description: Connect your own AI client to find, read, create, export and comment on drawings, propose changes, or execute member-started Codex assistant tasks.
 ---
 
 Excaliself has an [MCP](https://modelcontextprotocol.io) server at `/api/mcp`.
 Your AI client brings the model, so the instance needs no LLM API key.
+
+To send instructions from a drawing's **AI assistant** panel and keep Codex
+working after you close the browser, follow the [Codex assistant guide](/docs/ai-assistant/).
+The connector uses the task tools on this same endpoint. The `edit_drawing`
+workflow described below creates proposals for you to apply.
 
 Clients connect in one of two ways:
 
@@ -119,6 +124,13 @@ open `http://localhost:3000/preview/login`. Without the `-p` option, the
 client still works, but you can't open the app.
 
 ## Tools
+
+The Codex connector uses `assistant_poll`, `assistant_claim`, `assistant_work`,
+`assistant_heartbeat`, `assistant_acknowledge`, `assistant_report`,
+`assistant_read_scene`, `assistant_commit_edit` and `assistant_get_operation` for
+member-started tasks. Those task edits save through the authoritative Room and
+return persistent operation receipts. Your private conversation and controls are
+available to clients acting as your account.
 
 - `list_drawings`, `search_drawings`, and `list_folders` find drawings, with
   their space and folder.

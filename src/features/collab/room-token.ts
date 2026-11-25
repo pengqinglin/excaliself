@@ -6,6 +6,7 @@ import { resolveShareForRoom } from "@/features/shares/store"
 import { auth } from "@/lib/auth"
 import { memberDisplayName } from "./identity"
 import type { ParticipantIdentity } from "./room-session"
+import { shareKey } from "./share-key"
 
 export type RoomJoin =
   | { status: "ok"; roomId: string; identity: ParticipantIdentity }
@@ -34,6 +35,7 @@ export async function resolveRoomForToken(
       sessionId: session?.session.id ?? null,
       displayName: user ? memberDisplayName(user) : null,
       image: user?.image ?? null,
+      shareKey: shareKey(token),
     },
   }
 }

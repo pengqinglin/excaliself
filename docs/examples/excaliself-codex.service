@@ -1,0 +1,19 @@
+[Unit]
+Description=Excaliself Codex drawing connector
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# Set these paths for the same account that ran codex login.
+WorkingDirectory=%h/excaliself
+Environment=PATH=%h/.local/share/pnpm:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.config/excaliself-codex.env
+ExecStart=/usr/bin/env pnpm assistant:codex
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=15
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

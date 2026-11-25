@@ -1,6 +1,7 @@
 import type { LibraryItem } from "@excalidraw/excalidraw/types"
 import { sql } from "drizzle-orm"
 import {
+  type AnyPgColumn,
   boolean,
   check,
   customType,
@@ -13,8 +14,20 @@ import {
   primaryKey,
   text,
   timestamp,
+  unique,
   uniqueIndex,
 } from "drizzle-orm/pg-core"
+import {
+  credentialKinds,
+  type EventData,
+  eventKinds,
+  messageKinds,
+  runControls,
+  runStatuses,
+  workerStates,
+} from "../features/assistant/types"
+import type { SceneElement } from "../features/collab/protocol"
+import type { SceneSettings } from "../features/collab/scene-settings"
 
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
@@ -235,6 +248,9 @@ export const drawings = pgTable(
     id: text("id").primaryKey(),
     name: text("name").notNull(),
     data: text("data").notNull().default("{}"),
+    // Monotonic promotion: a Room owns this scene even without a share or seats.
+    serverManagedAt: timestamp("serverManagedAt"),
+    sceneRevision: integer("sceneRevision").notNull().default(0),
     // The scene's text, derived on every write so lists can search without
     // shipping scenes.
     searchText: text("searchText").notNull().default(""),
@@ -266,6 +282,10 @@ export const drawings = pgTable(
     creatorUnlessTeam: check(
       "drawings_creator_unless_team",
       sql`${table.space} = 'team' OR ${table.createdBy} IS NOT NULL`,
+    ),
+    nonnegativeRevision: check(
+      "drawings_scene_revision",
+      sql`${table.sceneRevision} >= 0`,
     ),
   }),
 )
@@ -432,5 +452,258 @@ export const commentReads = pgTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.userId, table.threadId] }),
+  }),
+)
+
+// Private member/drawing conversations, independent of scene data and comments.
+export const assistantConversations = pgTable(
+  "assistant_conversations",
+  {
+    id: text("id").primaryKey(),
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    drawingId: text("drawingId")
+      .notNull()
+      .references(() => drawings.id, { onDelete: "cascade" }),
+    nextMessageSequence: integer("nextMessageSequence").notNull().default(1),
+    nextEventSequence: integer("nextEventSequence").notNull().default(1),
+    createdAt: timestamp("createdAt")
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: timestamp("updatedAt")
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    memberDrawing: uniqueIndex("assistant_conversations_member_drawing").on(
+      table.userId,
+      table.drawingId,
+    ),
+    positiveSequences: check(
+      "assistant_conversations_sequences",
+      sql`${table.nextMessageSequence} > 0 and ${table.nextEventSequence} > 0`,
+    ),
+  }),
+)
+
+export const assistantRuns = pgTable(
+  "assistant_runs",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversationId")
+      .notNull()
+      .references(() => assistantConversations.id, { onDelete: "cascade" }),
+    status: text("status", { enum: runStatuses }).notNull().default("queued"),
+    control: text("control", { enum: runControls })
+      .notNull()
+      .default("running"),
+    controlVersion: integer("controlVersion").notNull().default(1),
+    acknowledgedControlVersion: integer("acknowledgedControlVersion")
+      .notNull()
+      .default(0),
+    firstInputSequence: integer("firstInputSequence").notNull(),
+    lastInputSequence: integer("lastInputSequence").notNull(),
+    receivedThroughSequence: integer("receivedThroughSequence")
+      .notNull()
+      .default(0),
+    // Stable credential identity, not a bearer token or a mutable display name.
+    credentialKind: text("credentialKind", { enum: credentialKinds }),
+    credentialId: text("credentialId"),
+    workerId: text("workerId"),
+    workerState: text("workerState", { enum: workerStates }),
+    leaseGeneration: integer("leaseGeneration").notNull().default(0),
+    leaseExpiresAt: timestamp("leaseExpiresAt"),
+    createdAt: timestamp("createdAt")
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: timestamp("updatedAt")
+      .notNull()
+      .$defaultFn(() => new Date()),
+    finishedAt: timestamp("finishedAt"),
+  },
+  (table) => ({
+    conversationRun: unique("assistant_runs_conversation_id").on(
+      table.conversationId,
+      table.id,
+    ),
+    oneActive: uniqueIndex("assistant_runs_one_active")
+      .on(table.conversationId)
+      .where(sql`${table.status} in ('queued', 'running', 'awaiting_input')`),
+    validState: check(
+      "assistant_runs_state",
+      sql`${table.status} in ('queued', 'running', 'awaiting_input', 'completed', 'failed', 'cancelled') and ${table.control} in ('running', 'paused')`,
+    ),
+    versions: check(
+      "assistant_runs_versions",
+      sql`${table.controlVersion} > 0 and ${table.acknowledgedControlVersion} between 0 and ${table.controlVersion}`,
+    ),
+    sequences: check(
+      "assistant_runs_sequences",
+      sql`${table.firstInputSequence} > 0 and ${table.lastInputSequence} >= ${table.firstInputSequence} and ${table.receivedThroughSequence} >= 0`,
+    ),
+    worker: check(
+      "assistant_runs_worker",
+      sql`(
+      (${table.workerId} is null and ${table.credentialKind} is null and ${table.credentialId} is null and ${table.workerState} is null and ${table.leaseGeneration} = 0 and ${table.leaseExpiresAt} is null)
+      or
+      (${table.workerId} is not null and ${table.credentialId} is not null and ${table.credentialKind} is not null and ${table.credentialKind} in ('access_token', 'oauth_grant') and ${table.workerState} is not null and ${table.workerState} in ('working', 'paused', 'awaiting_input') and ${table.leaseGeneration} > 0)
+    )`,
+    ),
+    finished: check(
+      "assistant_runs_finished",
+      sql`(${table.finishedAt} is not null) = (${table.status} in ('completed', 'failed', 'cancelled'))`,
+    ),
+  }),
+)
+
+export const assistantMessages = pgTable(
+  "assistant_messages",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversationId")
+      .notNull()
+      .references(() => assistantConversations.id, { onDelete: "cascade" }),
+    runId: text("runId").notNull(),
+    sequence: integer("sequence").notNull(),
+    source: text("source", { enum: ["member", "worker"] }).notNull(),
+    kind: text("kind", { enum: messageKinds }).notNull(),
+    body: text("body"),
+    requestId: text("requestId").notNull(),
+    requestHash: text("requestHash").notNull(),
+    createdAt: timestamp("createdAt")
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    ordered: uniqueIndex("assistant_messages_sequence").on(
+      table.conversationId,
+      table.sequence,
+    ),
+    deduplication: uniqueIndex("assistant_messages_request").on(
+      table.conversationId,
+      table.source,
+      table.requestId,
+    ),
+    run: foreignKey({
+      columns: [table.conversationId, table.runId],
+      foreignColumns: [assistantRuns.conversationId, assistantRuns.id],
+    }).onDelete("cascade"),
+    validContent: check(
+      "assistant_messages_content",
+      sql`${table.sequence} > 0 and (
+      (${table.source} = 'member' and ${table.kind} = 'user' and ${table.body} is not null and char_length(${table.body}) between 1 and 10000)
+      or (${table.source} = 'worker' and ${table.kind} = 'assistant' and ${table.body} is not null and char_length(${table.body}) between 1 and 10000)
+      or (${table.source} = 'member' and ${table.kind} in ('pause', 'resume', 'cancel') and ${table.body} is null)
+    )`,
+    ),
+  }),
+)
+
+export const assistantEvents = pgTable(
+  "assistant_events",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversationId")
+      .notNull()
+      .references(() => assistantConversations.id, { onDelete: "cascade" }),
+    runId: text("runId").notNull(),
+    sequence: integer("sequence").notNull(),
+    kind: text("kind", { enum: eventKinds }).notNull(),
+    data: jsonb("data").$type<EventData>().notNull(),
+    requestId: text("requestId"),
+    requestHash: text("requestHash"),
+    createdAt: timestamp("createdAt")
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => ({
+    ordered: uniqueIndex("assistant_events_sequence").on(
+      table.conversationId,
+      table.sequence,
+    ),
+    deduplication: uniqueIndex("assistant_events_request").on(
+      table.conversationId,
+      table.requestId,
+    ),
+    run: foreignKey({
+      columns: [table.conversationId, table.runId],
+      foreignColumns: [assistantRuns.conversationId, assistantRuns.id],
+    }).onDelete("cascade"),
+    validEvent: check(
+      "assistant_events_content",
+      sql`${table.sequence} > 0 and jsonb_typeof(${table.data}) = 'object' and ${table.kind} in ('message_created', 'run_created', 'run_claimed', 'run_controlled', 'run_acknowledged', 'run_reported', 'scene_committed') and ((${table.requestId} is null) = (${table.requestHash} is null))`,
+    ),
+  }),
+)
+
+/** Immutable proof that a particular assistant edit reached durable scene storage. */
+export const assistantOperations = pgTable(
+  "assistant_operations",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversationId")
+      .notNull()
+      .references(() => assistantConversations.id, { onDelete: "cascade" }),
+    runId: text("runId").notNull(),
+    requestId: text("requestId").notNull(),
+    requestHash: text("requestHash").notNull(),
+    summary: text("summary").notNull(),
+    before: jsonb("before").$type<SceneElement[]>().notNull(),
+    after: jsonb("after").$type<SceneElement[]>().notNull(),
+    beforeSettings: jsonb("beforeSettings").$type<Partial<SceneSettings>>(),
+    afterSettings: jsonb("afterSettings").$type<Partial<SceneSettings>>(),
+    sceneRevision: integer("sceneRevision").notNull(),
+    createdAt: timestamp("createdAt")
+      .notNull()
+      .$defaultFn(() => new Date()),
+    undoOf: text("undoOf").references(
+      (): AnyPgColumn => assistantOperations.id,
+      { onDelete: "cascade" },
+    ),
+    revertedAt: timestamp("revertedAt"),
+  },
+  (table) => ({
+    request: uniqueIndex("assistant_operations_request").on(
+      table.conversationId,
+      table.requestId,
+    ),
+    oneUndo: uniqueIndex("assistant_operations_undo").on(table.undoOf),
+    run: foreignKey({
+      columns: [table.conversationId, table.runId],
+      foreignColumns: [assistantRuns.conversationId, assistantRuns.id],
+    }).onDelete("cascade"),
+    revision: check(
+      "assistant_operations_revision",
+      sql`${table.sceneRevision} > 0 and char_length(${table.summary}) between 1 and 200 and jsonb_typeof(${table.before}) = 'array' and jsonb_typeof(${table.after}) = 'array'`,
+    ),
+  }),
+)
+
+export const assistantWorkers = pgTable(
+  "assistant_workers",
+  {
+    userId: text("userId")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    credentialKind: text("credentialKind", { enum: credentialKinds }).notNull(),
+    credentialId: text("credentialId").notNull(),
+    workerId: text("workerId").notNull(),
+    name: text("name").notNull(),
+    lastSeenAt: timestamp("lastSeenAt").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({
+      columns: [
+        table.userId,
+        table.credentialKind,
+        table.credentialId,
+        table.workerId,
+      ],
+    }),
+    valid: check(
+      "assistant_workers_identity",
+      sql`${table.credentialKind} in ('access_token', 'oauth_grant') and char_length(${table.workerId}) between 1 and 128 and char_length(${table.name}) between 1 and 100`,
+    ),
   }),
 )

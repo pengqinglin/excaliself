@@ -18,6 +18,7 @@ import {
 import type { Db } from "@/db"
 import { oauthClients, oauthGrants, users } from "@/db/schema"
 import { hashToken } from "@/features/access-tokens/tokens"
+import { releaseCredentialWork } from "@/features/assistant/lifecycle"
 
 const ACCESS_PREFIX = "exo_"
 const REFRESH_PREFIX = "exr_"
@@ -257,9 +258,12 @@ export async function refreshTokens(
   if (rotated.length > 0) return tokens
   // A spent token came back, so two parties hold this grant's tokens. We
   // can't tell which one is the thief, so the grant ends (RFC 9700 §4.14.2).
-  await db
+  const ended = await db
     .delete(oauthGrants)
     .where(and(ofClient, isNotNull(oauthGrants.refreshTokenHash)))
+    .returning({ id: oauthGrants.id })
+  for (const grant of ended)
+    await releaseCredentialWork(db, "oauth_grant", grant.id)
   return null
 }
 
@@ -297,7 +301,13 @@ export async function memberForOAuthToken(db: Db, token: string) {
       .set({ lastUsedAt: now })
       .where(eq(oauthGrants.id, row.grantId))
   }
-  return row.member
+  return {
+    ...row.member,
+    credential: {
+      credentialKind: "oauth_grant" as const,
+      credentialId: row.grantId,
+    },
+  }
 }
 
 /** A member's connected apps: grants whose code was traded for tokens. */
@@ -332,4 +342,5 @@ export async function revokeGrant(db: Db, userId: string, id: string) {
     .where(and(eq(oauthGrants.id, id), eq(oauthGrants.userId, userId)))
     .returning({ id: oauthGrants.id })
   if (revoked.length === 0) throw new Error("App not found")
+  await releaseCredentialWork(db, "oauth_grant", id)
 }

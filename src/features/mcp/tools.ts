@@ -13,6 +13,8 @@ import { z } from "zod"
 import type { Db } from "@/db"
 import { drawings, type Space, spaces } from "@/db/schema"
 import { userDisplayName } from "@/features/account/display-name"
+import { registerAssistantTools } from "@/features/assistant/mcp"
+import type { WorkerPrincipal } from "@/features/assistant/types"
 import { MAX_DRAWING_IMAGE_BYTES } from "@/features/collab/room-files"
 import { endTrashedRooms, rooms } from "@/features/collab/room-registry"
 import {
@@ -73,6 +75,7 @@ export type Member = {
   email: string
   /** The connected app's or access token's name, shown on proposed edits. */
   client: string
+  credential?: Pick<WorkerPrincipal, "credentialKind" | "credentialId">
 }
 
 /** How long edit_drawing and get_drawing_edit wait for the member to decide. */
@@ -121,7 +124,9 @@ export function createMcpServer(db: Db, member: Member, origin: string) {
 
 To change what is in an existing drawing, read it with read_drawing, then propose the change with edit_drawing. Nothing changes until the member clicks Apply on the drawing in Excaliself. Give them the drawing's link, and never say a change is done until a tool reports "applied".
 
-Comments you write show as written by this member via ${member.client}, and appear at once.`,
+Comments you write show as written by this member via ${member.client}, and appear at once.
+
+For a task explicitly started in the drawing's private Assistant panel, use assistant_* tools. Those tasks authorize background commits through assistant_commit_edit, whose saved operation receipt proves persistence. Ordinary edit_drawing still creates a proposal requiring Apply.`,
     },
   )
   const drawingUrl = (id: string) => `${origin}/draw/${id}`
@@ -1042,5 +1047,12 @@ Read the drawing with read_drawing first, and refer to its elements by the [id â
     },
   )
 
+  if (member.credential)
+    registerAssistantTools(
+      server,
+      db,
+      { userId: member.id, ...member.credential },
+      rooms,
+    )
   return server
 }

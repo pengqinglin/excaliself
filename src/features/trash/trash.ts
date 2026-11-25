@@ -5,6 +5,7 @@
 import { and, eq, inArray, isNull } from "drizzle-orm"
 import type { Db } from "@/db"
 import { drawings, folders } from "@/db/schema"
+import { cancelDrawingRuns } from "@/features/assistant/lifecycle"
 import { collectFolderSubtreeIds } from "@/features/folders/subtree"
 import { lockFolderTree } from "@/features/folders/tree-lock"
 import { accessibleTo } from "@/features/spaces/access"
@@ -17,18 +18,22 @@ export async function trashDrawingUnit(
 ): Promise<void> {
   // Leaves updatedAt alone: trashing is not an edit and must not reshuffle
   // recency-ordered lists once the drawing is restored.
-  const trashed = await db
-    .update(drawings)
-    .set({ deletedAt: new Date(), trashRootId: id, deletedBy: userId })
-    .where(
-      and(
-        eq(drawings.id, id),
-        accessibleTo(drawings, userId),
-        isNull(drawings.deletedAt),
-      ),
-    )
-    .returning({ id: drawings.id })
-  if (trashed.length === 0) throw new Error("Drawing not found")
+  await db.transaction(async (tx) => {
+    const timestamp = new Date()
+    const trashed = await tx
+      .update(drawings)
+      .set({ deletedAt: timestamp, trashRootId: id, deletedBy: userId })
+      .where(
+        and(
+          eq(drawings.id, id),
+          accessibleTo(drawings, userId),
+          isNull(drawings.deletedAt),
+        ),
+      )
+      .returning({ id: drawings.id })
+    if (trashed.length === 0) throw new Error("Drawing not found")
+    await cancelDrawingRuns(tx, [id], timestamp)
+  })
 }
 
 /**
@@ -66,7 +71,7 @@ export async function trashFolderUnit(
         ),
       )
     // Leaves updatedAt alone (see trashDrawingUnit) so restore is in place.
-    return tx
+    const trashed = await tx
       .update(drawings)
       .set({ deletedAt: now, trashRootId: id, deletedBy: userId })
       .where(
@@ -77,6 +82,12 @@ export async function trashFolderUnit(
         ),
       )
       .returning({ id: drawings.id })
+    await cancelDrawingRuns(
+      tx,
+      trashed.map((row) => row.id),
+      now,
+    )
+    return trashed
   })
   return swept.map((drawing) => drawing.id)
 }

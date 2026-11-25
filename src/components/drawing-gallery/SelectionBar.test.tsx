@@ -71,6 +71,8 @@ const drawings = ["a", "b", "c", "d"].map(
     id,
     name: `Drawing ${id}`,
     searchText: "",
+    serverManagedAt: null,
+    sceneRevision: 0,
     folderId: null,
     space: "private",
     createdBy: "user-1",

@@ -71,6 +71,7 @@ function renderSaver(
 test("a committed save is mirrored into the drawing cache", async () => {
   vi.mocked(saveDrawingScene).mockResolvedValue({
     status: "saved",
+    sceneRevision: 1,
     missingFileIds: [],
     overCapFileIds: [],
   })
@@ -123,6 +124,7 @@ const sentFileIds = (call: number) =>
 test("image bytes go up once: stored images are not sent again", async () => {
   vi.mocked(saveDrawingScene).mockReset().mockResolvedValue({
     status: "saved",
+    sceneRevision: 1,
     missingFileIds: [],
     overCapFileIds: [],
   })
@@ -141,11 +143,13 @@ test("images the server reports missing are sent again", async () => {
     .mockReset()
     .mockResolvedValueOnce({
       status: "saved",
+      sceneRevision: 1,
       missingFileIds: ["old"],
       overCapFileIds: [],
     })
     .mockResolvedValueOnce({
       status: "saved",
+      sceneRevision: 2,
       missingFileIds: [],
       overCapFileIds: [],
     })
@@ -226,6 +230,7 @@ test("images refused at the image cap are reported and kept out of the cache", a
     .mockReset()
     .mockResolvedValue({
       status: "saved",
+      sceneRevision: 1,
       missingFileIds: [],
       overCapFileIds: ["big"],
     })

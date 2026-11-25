@@ -54,7 +54,9 @@ function fakeDb(options: {
           returning: () => {
             calls.push({ kind: "update", table, set, where })
             return Promise.resolve(
-              options.updateHits === false ? [] : [{ id: "d1" }],
+              options.updateHits === false
+                ? []
+                : [{ id: "d1", sceneRevision: 1 }],
             )
           },
         }),
@@ -96,6 +98,7 @@ test("a solo save writes the scene, its search text, and bumps updatedAt", async
 
   expect(result).toEqual({
     status: "saved",
+    sceneRevision: 1,
     missingFileIds: [],
     overCapFileIds: [],
   })
@@ -201,6 +204,7 @@ test("a used image with no stored bytes is reported missing", async () => {
 
   expect(result).toEqual({
     status: "saved",
+    sceneRevision: 1,
     missingFileIds: ["lost", "bad"],
     overCapFileIds: [],
   })
@@ -223,6 +227,7 @@ test("images past the drawing's image cap are not stored, and reported", async (
   // Not "missing" too: the client would only resend it to be refused again.
   expect(result).toEqual({
     status: "saved",
+    sceneRevision: 1,
     missingFileIds: [],
     overCapFileIds: ["over"],
   })

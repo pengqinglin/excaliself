@@ -19,8 +19,9 @@ import {
   SCENE_UNREADABLE_CLOSE_REASON,
 } from "./protocol"
 import { reconcileElements } from "./reconcile"
+import { DEFAULT_SCENE_SETTINGS, type SceneSettings } from "./scene-settings"
 import type { StoredScene } from "./scene-store"
-import { isSyncableElement } from "./scene-sync"
+import { isSyncableElement, splitSceneFrames } from "./scene-sync"
 
 /** The slice of a crossws `Peer` the room logic uses. */
 export interface RoomPeer {
@@ -42,6 +43,8 @@ export type ParticipantIdentity = {
   displayName: string | null
   /** The member's `users.image`. Null for guests. */
   image: string | null
+  /** Internal only: hash of the share token that admitted this connection. */
+  shareKey?: string
 }
 
 export type SceneLoader = (roomId: string) => Promise<StoredScene>
@@ -49,6 +52,7 @@ export type SceneLoader = (roomId: string) => Promise<StoredScene>
 export type SceneSaver = (
   roomId: string,
   elements: SceneElement[],
+  settings?: SceneSettings,
 ) => Promise<void>
 
 /** Trailing write delay; a crash loses at most this much from the db. */
@@ -61,6 +65,7 @@ export type Seat = {
   userId: string | null
   /** The session the socket joined with, so revoking it ends the seat. */
   sessionId: string | null
+  shareKey?: string
   /** Last frame time, for the ghost sweep. */
   lastSeenAt: number
 }
@@ -78,10 +83,16 @@ export type Room = {
   bytes: number
   /** Cached for the live badge and the reserved seat; null until loaded. */
   access: AccessRow | null
+  serverManaged: boolean
+  settings: SceneSettings
+  settingsRevision: number
   dirty: boolean
   flushTimer: ReturnType<typeof setTimeout> | null
   /** The write in flight; overlapping flushes chain onto it. */
   flushing: Promise<void>
+  /** Human deltas, strict commits and flushes share this short queue. */
+  serial: Promise<void>
+  holds: number
 }
 
 /** One Room per drawing, in-memory per process. */
@@ -122,9 +133,14 @@ function ensureRoom(registry: RoomRegistry, roomId: string): Room {
     elements: [],
     bytes: 0,
     access: null,
+    serverManaged: false,
+    settings: { ...DEFAULT_SCENE_SETTINGS },
+    settingsRevision: 0,
     dirty: false,
     flushTimer: null,
     flushing: Promise.resolve(),
+    serial: Promise.resolve(),
+    holds: 0,
   }
   registry.rooms.set(roomId, room)
 
@@ -149,6 +165,8 @@ function ensureRoom(registry: RoomRegistry, roomId: string): Room {
       room.elements = stored.elements
       room.bytes = sceneBytes(stored.elements)
       room.access = stored.access
+      room.serverManaged = stored.serverManaged === true
+      room.settings = stored.settings ?? { ...DEFAULT_SCENE_SETTINGS }
     },
     (error) => {
       // Clients reconnect into a fresh read.
@@ -167,7 +185,7 @@ function disarmFlush(room: Room) {
 
 /** Drops an empty, written Room. Also runs after writes: a leave can race one. */
 function reapIfIdle(registry: RoomRegistry, room: Room) {
-  if (room.seats.size > 0 || room.dirty) return
+  if (room.seats.size > 0 || room.dirty || room.holds > 0) return
   if (registry.rooms.get(room.id) !== room) return
   disarmFlush(room)
   registry.rooms.delete(room.id)
@@ -200,27 +218,96 @@ function errorCode(error: unknown): string {
  */
 function flushRoom(registry: RoomRegistry, room: Room): Promise<void> {
   disarmFlush(room)
-  if (!room.dirty) return room.flushing
+  if (!room.dirty) return serializeRoom(room, async () => {})
 
   room.dirty = false
-  room.flushing = room.flushing.then(() =>
+  room.flushing = serializeRoom(room, () =>
     // Read inside the chain, so merges during an earlier write ride along.
-    registry.saveScene(room.id, room.elements).then(
-      () => {
-        reapIfIdle(registry, room)
-      },
-      (error) => {
-        // Still in memory: retry on the throttle. An empty Room stays until it lands.
-        console.error(
-          `[collab] could not flush room ${room.id}`,
-          errorCode(error),
-        )
-        room.dirty = true
-        armFlush(registry, room)
-      },
-    ),
+    registry
+      .saveScene(
+        room.id,
+        room.elements,
+        room.serverManaged ? room.settings : undefined,
+      )
+      .then(
+        () => {
+          reapIfIdle(registry, room)
+        },
+        (error) => {
+          // Still in memory: retry on the throttle. An empty Room stays until it lands.
+          console.error(
+            `[collab] could not flush room ${room.id}`,
+            errorCode(error),
+          )
+          room.dirty = true
+          armFlush(registry, room)
+        },
+      ),
   )
   return room.flushing
+}
+
+function serializeRoom<T>(room: Room, action: () => Promise<T>): Promise<T> {
+  const pending = room.serial.then(action)
+  // One failed command must not poison subsequent human edits or retries.
+  room.serial = pending.then(
+    () => {},
+    () => {},
+  )
+  return pending
+}
+
+/** A temporary Room works even with no browser or guest seat. */
+export async function withRoomScene<T>(
+  registry: RoomRegistry,
+  roomId: string,
+  action: (room: Room) => Promise<T>,
+): Promise<T> {
+  if (registry.closing) throw new Error("The server is restarting")
+  const room = ensureRoom(registry, roomId)
+  room.holds += 1
+  try {
+    await room.loaded
+    if (registry.rooms.get(roomId) !== room || !room.access)
+      throw new Error("Scene unavailable")
+    return await serializeRoom(room, () => action(room))
+  } finally {
+    room.holds -= 1
+    reapIfIdle(registry, room)
+  }
+}
+
+/** Call only inside withRoomScene, after the full scene has committed to Db. */
+export function installCommittedScene(
+  registry: RoomRegistry,
+  room: Room,
+  elements: SceneElement[],
+  changed: SceneElement[],
+  settings: SceneSettings,
+) {
+  room.elements = elements
+  room.bytes = sceneBytes(elements)
+  room.dirty = false
+  disarmFlush(room)
+  const settingsChanged =
+    JSON.stringify(settings) !== JSON.stringify(room.settings)
+  room.settings = settings
+  if (settingsChanged) room.settingsRevision += 1
+  for (const { peer } of room.seats.values()) {
+    try {
+      for (const frame of splitSceneFrames(changed))
+        peer.send({ type: "SCENE_UPDATE", payload: { elements: frame } })
+      if (settingsChanged)
+        peer.send({
+          type: "SCENE_STATE",
+          payload: { appState: settings, revision: room.settingsRevision },
+        })
+    } catch {
+      // The receipt remains durable if a socket stops reading after commit.
+      closeToRejoin(peer)
+    }
+  }
+  reapIfIdle(registry, room)
 }
 
 /**
@@ -383,6 +470,7 @@ export async function joinRoom(
     peer,
     userId: identity.userId,
     sessionId: identity.sessionId,
+    shareKey: identity.shareKey,
     lastSeenAt: registry.now(),
   })
 
@@ -400,7 +488,18 @@ export async function joinRoom(
     // copy; a joiner never needs them.
     const now = registry.now()
     const elements = room.elements.filter((el) => isSyncableElement(el, now))
-    peer.send({ type: "SCENE_INIT", payload: { elements } })
+    peer.send({
+      type: "SCENE_INIT",
+      payload: {
+        elements,
+        ...(room.serverManaged && {
+          settings: {
+            appState: room.settings,
+            revision: room.settingsRevision,
+          },
+        }),
+      },
+    })
   }
   return { status: "ok" }
 }
@@ -605,11 +704,47 @@ export async function receiveFromPeer(
       // Wait for the stored scene, or the merge would drop it.
       await room.loaded
       if (!room.seats.has(peer.id)) return "evicted"
-      if (
-        applySceneUpdate(room, peer, message.payload.elements, registry.now())
-      )
-        markDirty(registry, room)
-      return "ok"
+      return serializeRoom(room, async () => {
+        if (!room.seats.has(peer.id)) return "evicted"
+        if (
+          applySceneUpdate(room, peer, message.payload.elements, registry.now())
+        )
+          markDirty(registry, room)
+        return "ok"
+      })
+
+    case "SCENE_STATE": {
+      await room.loaded
+      if (!room.seats.has(peer.id)) return "evicted"
+      return serializeRoom(room, async () => {
+        if (!room.seats.has(peer.id)) return "evicted"
+        if (!room.serverManaged) return "ok"
+        const { baseRevision, requestId, appState } = message.payload
+        const accepted = baseRevision === room.settingsRevision
+        if (
+          accepted &&
+          JSON.stringify(appState) !== JSON.stringify(room.settings)
+        ) {
+          room.settings = appState
+          room.settingsRevision += 1
+          markDirty(registry, room)
+          publish(room, peer, {
+            type: "SCENE_STATE",
+            payload: { appState, revision: room.settingsRevision },
+          })
+        }
+        peer.send({
+          type: "SCENE_STATE",
+          payload: {
+            appState: room.settings,
+            revision: room.settingsRevision,
+            requestId,
+            accepted,
+          },
+        })
+        return "ok"
+      })
+    }
 
     case "MOUSE_LOCATION":
       publish(room, peer, {
@@ -702,13 +837,43 @@ export function trashRoom(
 export async function endLinkRoom(
   registry: RoomRegistry,
   roomId: string,
+  revokedShareKey?: string,
 ): Promise<void> {
   const room = registry.rooms.get(roomId)
   if (!room) return
   // `access` is read once the scene has loaded.
   await room.loaded
-  if (room.access?.space === "team") return evictNonMembers(registry, roomId)
+  if (room.access?.space === "team" || room.serverManaged)
+    return evictSeats(registry, room, (seat) => {
+      const independent =
+        seat.userId !== null &&
+        room.access !== null &&
+        canAccess(room.access, seat.userId)
+      return (
+        !independent &&
+        (revokedShareKey === undefined || seat.shareKey === revokedShareKey)
+      )
+    })
   return terminateRoom(registry, roomId)
+}
+
+/** Called after promotion commits, in the same topology transition as link changes. */
+export async function markRoomServerManaged(
+  registry: RoomRegistry,
+  roomId: string,
+) {
+  const room = registry.rooms.get(roomId)
+  if (!room) return
+  await room.loaded
+  if (room.serverManaged) return
+  const stored = await registry.loadScene(roomId)
+  room.serverManaged = true
+  room.settings = stored.settings ?? { ...DEFAULT_SCENE_SETTINGS }
+  for (const { peer } of room.seats.values())
+    peer.send({
+      type: "SCENE_STATE",
+      payload: { appState: room.settings, revision: room.settingsRevision },
+    })
 }
 
 /**
@@ -754,9 +919,12 @@ async function endRoom(
 
   // Clear seats before the flush: that freezes the scene the write sees.
   // Peers are captured first, so their close hooks find nothing to flush.
-  const seats = [...room.seats.values()]
-  room.seats.clear()
-  room.follows.clear()
+  const seats = await serializeRoom(room, async () => {
+    const captured = [...room.seats.values()]
+    room.seats.clear()
+    room.follows.clear()
+    return captured
+  })
 
   await flushRoom(registry, room)
   reapIfIdle(registry, room)

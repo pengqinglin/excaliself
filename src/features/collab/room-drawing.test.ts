@@ -10,6 +10,7 @@ type Row = {
   space: Space
   createdBy: string | null
   deletedAt: Date | null
+  serverManagedAt?: Date | null
 }
 
 const ada = {
@@ -66,6 +67,37 @@ test("someone else's private drawing is refused", async () => {
 test("the member's own private drawing is refused too", async () => {
   expect(
     await resolve({ ...teamDrawing, space: "private", createdBy: "user-ada" }),
+  ).toEqual(REFUSED)
+})
+
+test("a server-managed private drawing admits its owner by ID without a link", async () => {
+  expect(
+    await resolve({
+      ...teamDrawing,
+      space: "private",
+      createdBy: ada.id,
+      serverManagedAt: new Date(),
+    }),
+  ).toMatchObject({
+    status: "ok",
+    roomId: teamDrawing.id,
+    identity: { userId: ada.id },
+  })
+  expect(
+    await resolve({
+      ...teamDrawing,
+      space: "private",
+      serverManagedAt: new Date(),
+    }),
+  ).toEqual(REFUSED)
+  expect(
+    await resolve({
+      ...teamDrawing,
+      space: "private",
+      createdBy: ada.id,
+      serverManagedAt: new Date(),
+      deletedAt: new Date(),
+    }),
   ).toEqual(REFUSED)
 })
 

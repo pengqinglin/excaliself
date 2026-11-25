@@ -8,8 +8,10 @@ import {
 } from "@tanstack/react-start/server"
 import { z } from "zod"
 import { db } from "@/db"
+import { withDrawingTransition } from "@/features/collab/drawing-transition"
 import { rooms } from "@/features/collab/room-registry"
 import { endLinkRoom, evictNonMembers } from "@/features/collab/room-session"
+import { shareKey } from "@/features/collab/share-key"
 import { auth } from "@/lib/auth"
 import { authMiddleware } from "@/middleware/auth"
 import { admitsGuests } from "./access"
@@ -37,7 +39,14 @@ export const createShare = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator(z.object({ drawingId: z.string(), audience: audienceSchema }))
   .handler(async ({ data, context }) =>
-    createShareLink(db, context.session.user.id, data.drawingId, data.audience),
+    withDrawingTransition(data.drawingId, () =>
+      createShareLink(
+        db,
+        context.session.user.id,
+        data.drawingId,
+        data.audience,
+      ),
+    ),
   )
 
 // Write the row before touching the room, so a socket joining in between
@@ -46,38 +55,46 @@ export const createShare = createServerFn({ method: "POST" })
 export const stopSharing = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator(z.string())
-  .handler(async ({ data: drawingId, context }) => {
-    await stopSharingDrawing(db, context.session.user.id, drawingId)
-    await endLinkRoom(rooms, drawingId)
-  })
+  .handler(({ data: drawingId, context }) =>
+    withDrawingTransition(drawingId, async () => {
+      const old = await getShareLink(db, context.session.user.id, drawingId)
+      await stopSharingDrawing(db, context.session.user.id, drawingId)
+      if (old) await endLinkRoom(rooms, drawingId, shareKey(old.token))
+    }),
+  )
 
 export const regenerateShare = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator(z.string())
-  .handler(async ({ data: drawingId, context }) => {
-    const share = await regenerateShareLink(
-      db,
-      context.session.user.id,
-      drawingId,
-    )
-    await endLinkRoom(rooms, drawingId)
-    return share
-  })
+  .handler(({ data: drawingId, context }) =>
+    withDrawingTransition(drawingId, async () => {
+      const old = await getShareLink(db, context.session.user.id, drawingId)
+      const share = await regenerateShareLink(
+        db,
+        context.session.user.id,
+        drawingId,
+      )
+      if (old) await endLinkRoom(rooms, drawingId, shareKey(old.token))
+      return share
+    }),
+  )
 
 export const setShareAudience = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
   .validator(z.object({ drawingId: z.string(), audience: audienceSchema }))
-  .handler(async ({ data, context }) => {
-    const share = await setShareLinkAudience(
-      db,
-      context.session.user.id,
-      data.drawingId,
-      data.audience,
-    )
-    if (!admitsGuests(share.audience))
-      await evictNonMembers(rooms, data.drawingId)
-    return share
-  })
+  .handler(({ data, context }) =>
+    withDrawingTransition(data.drawingId, async () => {
+      const share = await setShareLinkAudience(
+        db,
+        context.session.user.id,
+        data.drawingId,
+        data.audience,
+      )
+      if (!admitsGuests(share.audience))
+        await evictNonMembers(rooms, data.drawingId)
+      return share
+    }),
+  )
 
 export type ShareVisit = ShareResolution | { status: "throttled" }
 

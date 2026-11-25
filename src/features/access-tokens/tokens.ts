@@ -6,6 +6,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { and, desc, eq } from "drizzle-orm"
 import type { Db } from "@/db"
 import { accessTokens, users } from "@/db/schema"
+import { releaseCredentialWork } from "@/features/assistant/lifecycle"
 
 // Marks the string as an Excaliself token, for people and secret scanners.
 const PREFIX = "exs_"
@@ -51,6 +52,7 @@ export async function revokeAccessToken(db: Db, userId: string, id: string) {
     .where(and(eq(accessTokens.id, id), eq(accessTokens.userId, userId)))
     .returning({ id: accessTokens.id })
   if (revoked.length === 0) throw new Error("Token not found")
+  await releaseCredentialWork(db, "access_token", id)
 }
 
 /** The member a token acts as, `client` being the token's name. Null when unknown or revoked. */
@@ -81,5 +83,11 @@ export async function memberForToken(db: Db, token: string) {
       .set({ lastUsedAt: now })
       .where(eq(accessTokens.id, row.tokenId))
   }
-  return row.member
+  return {
+    ...row.member,
+    credential: {
+      credentialKind: "access_token" as const,
+      credentialId: row.tokenId,
+    },
+  }
 }

@@ -71,6 +71,8 @@ function makeDrawing(overrides: Partial<Drawing> = {}): Drawing {
     id: "d1",
     name: "Retro board",
     searchText: "",
+    serverManagedAt: null,
+    sceneRevision: 0,
     folderId: null,
     space: "private",
     createdBy: "user-1",

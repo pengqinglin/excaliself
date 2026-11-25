@@ -55,6 +55,7 @@ export function useAutoSave<TData, TPayload>({
   const latestDataRef = useRef<TData | null>(null)
   const performSaveRef = useRef<(data: TData) => void>(() => {})
   const inFlightRef = useRef<Promise<unknown> | null>(null)
+  const holdsRef = useRef(0)
 
   // All bookkeeping lives in mutation-level callbacks: unlike per-mutate
   // callbacks, they run even after unmount, so the post-settle re-check and
@@ -73,7 +74,8 @@ export function useAutoSave<TData, TPayload>({
       // saved state — while this save was in flight. If the latest state no
       // longer matches what was committed, save it now.
       const latest = latestDataRef.current
-      if (latest != null && !pausedRef.current) performSaveRef.current(latest)
+      if (latest != null && !pausedRef.current && holdsRef.current === 0)
+        performSaveRef.current(latest)
     },
     onError: (err) => handlersRef.current.onError?.(err),
     onSettled: (_data, _err, { sig }) => {
@@ -83,6 +85,7 @@ export function useAutoSave<TData, TPayload>({
 
   const performSave = useCallback(
     (data: TData) => {
+      if (pausedRef.current || holdsRef.current > 0) return
       const payload = handlersRef.current.toPayload(data)
       const sig = handlersRef.current.getSignature(payload)
       if (sig === lastSavedSigRef.current || sig === pendingSigRef.current) {
@@ -98,8 +101,11 @@ export function useAutoSave<TData, TPayload>({
   )
   performSaveRef.current = performSave
 
-  const { run: runDebouncedSave, flush: flushDebouncedSave } =
-    useDebounceCallback(performSave, DEBOUNCE_MS)
+  const {
+    run: runDebouncedSave,
+    flush: flushDebouncedSave,
+    cancel: cancelDebouncedSave,
+  } = useDebounceCallback(performSave, DEBOUNCE_MS)
 
   /** Saves all pending changes. Rejects on failure, so a share handoff stops. */
   const flush = useCallback(async () => {
@@ -116,6 +122,36 @@ export function useAutoSave<TData, TPayload>({
     }
   }, [flushDebouncedSave, performSave])
 
+  /** Stop scheduling synchronously; drain issued requests before a writer handoff. */
+  const hold = useCallback(() => {
+    holdsRef.current += 1
+    cancelDebouncedSave()
+    const drained = (async () => {
+      let awaited: Promise<unknown> | null = null
+      while (inFlightRef.current && inFlightRef.current !== awaited) {
+        awaited = inFlightRef.current
+        await awaited
+      }
+    })()
+    let released = false
+    return {
+      drained,
+      release(savePending = true) {
+        if (released) return
+        released = true
+        holdsRef.current -= 1
+        const latest = latestDataRef.current
+        if (
+          savePending &&
+          holdsRef.current === 0 &&
+          latest != null &&
+          initializedRef.current
+        )
+          performSaveRef.current(latest)
+      },
+    }
+  }, [cancelDebouncedSave])
+
   const handleChange = useCallback(
     (data: TData) => {
       latestDataRef.current = data
@@ -128,7 +164,7 @@ export function useAutoSave<TData, TPayload>({
           return
         }
       }
-      if (pausedRef.current) return
+      if (pausedRef.current || holdsRef.current > 0) return
       runDebouncedSave(data)
     },
     [runDebouncedSave, skipInitialChange],
@@ -137,10 +173,13 @@ export function useAutoSave<TData, TPayload>({
   // When a pause lifts, save the state recorded while paused; the signature
   // dedup turns this into a no-op if nothing actually changed.
   useEffect(() => {
-    if (paused) return
+    if (paused) {
+      cancelDebouncedSave()
+      return
+    }
     const latest = latestDataRef.current
     if (initializedRef.current && latest != null) runDebouncedSave(latest)
-  }, [paused, runDebouncedSave])
+  }, [paused, runDebouncedSave, cancelDebouncedSave])
 
   // Auto-clear the "Saved" indicator after a moment.
   useEffect(() => {
@@ -159,5 +198,6 @@ export function useAutoSave<TData, TPayload>({
     saved,
     handleChange,
     flush,
+    hold,
   }
 }
