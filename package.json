@@ -19,7 +19,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "smoke:ws": "tsx scripts/ws-smoke-test.ts",
-    "assistant:codex": "tsx scripts/codex-connector.ts"
+    "assistant:codex": "tsx scripts/codex-connector.ts",
+    "assistant:opencode": "tsx scripts/opencode-connector.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

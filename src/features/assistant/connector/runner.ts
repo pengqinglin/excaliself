@@ -44,8 +44,9 @@ export function taskPrompt(
   run: Run,
   messages: Message[],
   workerId: string,
+  executorName = "Codex",
 ) {
-  return `You are Codex editing an existing Excaliself drawing for its member. Reply in the member's language. Work only on drawing ${task.drawingId}.
+  return `You are ${executorName} editing an existing Excaliself drawing for its member. Reply in the member's language. Work only on drawing ${task.drawingId}.
 Use the excaliself MCP assistant_read_scene, assistant_commit_edit and assistant_get_operation tools. Do not create files, run shell commands, make proposals, or use other services. The connector handles task controls and final reports.
 Every call must carry this exact context: ${JSON.stringify({ workerId, conversationId: task.conversationId, runId: run.id, generation: run.leaseGeneration, controlVersion: run.controlVersion })}.
 Read the authoritative scene before planning. Include its base revisions for every affected shape, bound label and connector. Preserve unrelated human edits. Operations with undoOf reverse an earlier edit; do not reapply reverted work unless the member explicitly requests it. For scene_conflict, reread and reassess the latest scene. For stale_control, paused, lease_lost, credential_revoked or not_found, stop without further writes.
@@ -66,10 +67,14 @@ export async function runConnector(options: {
   pollMs?: number
   monitorMs?: number
   heartbeatMs?: number
+  executorName?: string
+  name?: string
   log?: (message: string) => void
 }) {
   const { client, state, execute, signal } = options
   const log = options.log ?? (() => {})
+  const executorName = options.executorName ?? "Codex"
+  const name = options.name ?? executorName
   // A restarted parent must not reuse a live lease held by an orphaned child.
   const workerId = `${state.data.workerId}:${options.instanceId ?? randomUUID()}`
   const pollMs = options.pollMs ?? 2_000
@@ -146,7 +151,7 @@ export async function runConnector(options: {
         message.sequence >= claimed.firstInputSequence ||
         index >= loaded.messages.length - 100,
     )
-    const prompt = taskPrompt(task, run, transcript, workerId)
+    const prompt = taskPrompt(task, run, transcript, workerId, executorName)
     const model = new AbortController()
     const combined = AbortSignal.any([signal, model.signal])
     let changed = false
@@ -176,7 +181,7 @@ export async function runConnector(options: {
         }
         if (Date.now() - lastHeartbeat >= (options.heartbeatMs ?? 15_000)) {
           await call("assistant_heartbeat", context, monitorSignal)
-          await call("assistant_poll", { name: "Codex" }, monitorSignal)
+          await call("assistant_poll", { name }, monitorSignal)
           lastHeartbeat = Date.now()
         }
       }
@@ -215,7 +220,7 @@ export async function runConnector(options: {
             !context.threadId ||
             combined.aborted ||
             !(error instanceof ConnectorError) ||
-            error.code !== "codex_failed"
+            !["codex_failed", "opencode_failed"].includes(error.code)
           )
             throw error
           // A moved state directory may not have Codex's local session files.
@@ -232,7 +237,7 @@ export async function runConnector(options: {
           body:
             error instanceof ConnectorError
               ? error.message
-              : "Codex could not start or complete the task. Check the connector configuration and Codex login.",
+              : `${executorName} could not start or complete the task. Check the connector configuration and model login.`,
         }
     } finally {
       finished = true
@@ -274,7 +279,7 @@ export async function runConnector(options: {
         protocolVersion: number
         memberId: string
         tasks: Task[]
-      }>("assistant_poll", { name: "Codex" })
+      }>("assistant_poll", { name })
       if (poll.protocolVersion !== 1)
         throw new ConnectorError(
           "protocol_version",

@@ -1,10 +1,10 @@
 ---
-title: "AI assistant: work with Codex on a drawing"
-description: Send private instructions from an existing drawing, pause or continue Codex, and keep background work running after you close the page.
+title: "AI assistant: work with Codex or OpenCode on a drawing"
+description: Send private instructions from an existing drawing, pause or continue your AI, and keep background work running after you close the page.
 ---
 
 Open a drawing and choose **AI assistant**. Describe a change, send follow-up
-instructions, and pause, continue or cancel the task from the panel. Codex edits
+instructions, and pause, continue or cancel the task from the panel. Your AI edits
 the existing drawing and each saved change gets a receipt you can review or revert.
 
 Your conversation and task controls are private to your account. The resulting
@@ -43,6 +43,57 @@ The connector also accepts an address ending in `/api/mcp`. Its status appears i
 **Settings → MCP** and the drawing's assistant panel. Leave the process running,
 or run it as a service as described below. The application image runs the web app;
 the connector runs separately from its source checkout.
+
+## Use OpenCode instead
+
+The OpenCode connector uses the same task protocol, current drawing data, saved
+receipts and pause controls. It uses OpenCode's existing provider configuration
+and credentials on the connector machine; no model key is entered in Excaliself.
+Install OpenCode and confirm that `opencode run` can reach your chosen model.
+The connector has been checked with OpenCode 1.19.6.
+
+Create a personal access token under **Settings → MCP**, then run from an
+Excaliself checkout with its dependencies installed:
+
+```bash
+export EXCALISELF_URL='http://127.0.0.1:3131'
+read -rs EXCALISELF_TOKEN
+export EXCALISELF_TOKEN
+pnpm assistant:opencode
+```
+
+Use your application's actual address. `127.0.0.1` works when the connector and
+application run on the same machine. To select a model explicitly, set
+`EXCALISELF_OPENCODE_MODEL` to an installed `provider/model` identifier before
+starting the connector; otherwise OpenCode's default model applies.
+
+The connector starts OpenCode with an isolated drawing agent that can use only
+`assistant_read_scene`, `assistant_commit_edit` and `assistant_get_operation`.
+It supplies the MCP address and Excaliself token to the new process without
+changing your global OpenCode configuration. Existing OpenCode terminal sessions
+keep their loaded configuration; restart a terminal session after adding MCP
+configuration to that session separately.
+
+**Settings → MCP** shows this instance's MCP address and commands for either
+connector. An online connector's name appears there and in the drawing panel;
+an explicitly selected OpenCode model appears alongside its name. Online means
+the connector is polling successfully; the task result reports whether model
+execution and drawing changes succeeded.
+
+For an end-to-end check, start with an existing “Browser → API → Database”
+drawing, then send “Read this drawing and insert a Redis cache between the API
+and database, preserving the existing colors.” The AI must read the current
+elements, preserve their identities, update the connectors and obtain a saved
+receipt. Send a follow-up such as “Add a cache-miss label to the database arrow”
+to continue on the same drawing and native AI session.
+
+OpenCode-specific settings are `EXCALISELF_OPENCODE_BIN` (default `opencode`),
+`EXCALISELF_OPENCODE_MODEL` and `EXCALISELF_OPENCODE_TIMEOUT_MS` (default 30
+minutes). The default state directory is under
+`$XDG_STATE_HOME/excaliself-opencode/`, or `~/.local/state/excaliself-opencode/`.
+Use a different state directory for each member, endpoint and executor. For a
+user service, adapt the Codex service example to run `pnpm assistant:opencode`
+under the account whose OpenCode model is configured.
 
 ## Work on an existing drawing
 

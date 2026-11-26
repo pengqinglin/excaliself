@@ -1,6 +1,6 @@
 # 开发与维护记录
 
-最后更新：2026-11-25
+最后更新：2026-11-26
 
 ## 文档导航
 
@@ -72,3 +72,11 @@ REQ-001～008 的实现包含私有会话、任务、服务端画布交接、后
 Vitest、typecheck 与应用 build 应顺序执行，避免同时重新生成 `src/paraglide`。本机全量测试约 118～156 秒，终端超时需要适当设置或后台执行并检查最终退出结果。应用联调使用另建的 `req010_test` 库；系统 Chromium 和 Playwright 在隔离工具目录中，未添加浏览器测试工具为应用运行依赖。
 
 后台提交用独立 `fractional-indexing` 生成新增元素的排序索引，避免浏览器首次打开时补索引推进版本而使撤回冲突（M007）。最终回报重放允许同成员替换凭据恢复已保存结果；新提交继续核验原租约（M006）。
+
+## OpenCode 连接器与真实演示
+
+- 入口 `pnpm assistant:opencode`；使用 OpenCode 已有 provider 配置，核对版本为 1.19.6。必需环境变量同 Codex，其他配置见 `--help` 及用户指南；默认执行上限 30 分钟。
+- 默认状态根目录为 `$XDG_STATE_HOME/excaliself-opencode/` 或 `~/.local/state/excaliself-opencode/`，按端点再隔离；不要与 Codex 或其他成员共用目录。原生 session 随私有 journal 保存，后续任务继续该会话。
+- 新进程注入独立配置，绘图 agent 仅允许三个场景工具；不更改全局 OpenCode 配置。网页在线状态只表示轮询正常，真实修改须核对操作回执，不能用在线标志证明模型成功。
+- 本机 3131 生产服务和真实 OpenCode 演示使用 `localqa_20261125_test`；单元并发测试另用 `localqa_unit_20261125_test`。两轮真实模型、场景拓扑和窄屏结果见 [REQ-011 验证](REQ-011/VALIDATION.md)。
+- WebSocket smoke 必须在无人使用的专用测试绘图运行，显式传入其分享 token。默认脚本选最近编辑的绘图并临时变更分享，还会写入删除元素；在打开的演示房间执行会使人数和最后离开落库断言失败（M008）。本机隔离脚本 `/tmp/opencode/req011-isolated-ws.mjs` 只创建并清理自己的 QA 绘图。

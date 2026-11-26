@@ -98,6 +98,9 @@ The immutable before/after payload of a committed assistant drawing edit, stored
 ### Codex connector
 A continuously running process that polls MCP as one member, executes Codex CLI with that member's login, independently renews task leases and watches controls. Its private local journal retains a persistent machine identity, per-conversation Codex thread references and unconfirmed reports. Each process adds a distinct execution instance to its worker ID so a restarted connector cannot reuse an orphan's active lease.
 
+### OpenCode connector
+An alternative executor for the same Assistant tasks, using OpenCode's configured model and credentials. It reads the current drawing through MCP, keeps a native session per conversation, and uses the same fenced commits, controls and receipt recovery. The member sees the connected executor's name in Settings and the drawing panel; an online connector is distinct from a successful model result.
+
 ### Comment
 One plain-text message in a Comment thread, by one member (or their AI client, shown as "via" its name). The first one opens the thread. Only its author edits or deletes it.
 

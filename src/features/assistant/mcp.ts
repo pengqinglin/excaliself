@@ -90,7 +90,7 @@ export function registerAssistantTools(
 
   tool(
     "assistant_poll",
-    "Keep the Codex connector online and discover this member's durable drawing tasks. Does not claim a task. Poll every 2–5 seconds while idle.",
+    "Keep the AI connector online and discover this member's durable drawing tasks. Does not claim a task. Poll every 2–5 seconds while idle. Include the executor name, such as Codex or OpenCode.",
     worker.extend({ name: z.string().min(1).max(100).default("Codex") }),
     async ({ workerId, name }) => ({
       protocolVersion: 1,

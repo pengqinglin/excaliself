@@ -57,7 +57,10 @@ export function createAssistantWorkerStore(
               assistantWorkers.credentialId,
               assistantWorkers.workerId,
             ],
-            set: { lastSeenAt: timestamp },
+            set: {
+              lastSeenAt: timestamp,
+              name: name.trim().slice(0, 100) || "Codex",
+            },
           })
         return tx
           .select({

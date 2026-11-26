@@ -233,6 +233,15 @@ export function AssistantPanel({
             ? m.assistant_connected()
             : m.assistant_disconnected()}
         </p>
+        {!!state.data?.connections.length && (
+          <ul className="mt-1 space-y-1 text-muted-foreground">
+            {state.data.connections.map((connection) => (
+              <li key={connection.workerId} className="break-words">
+                {connection.name}
+              </li>
+            ))}
+          </ul>
+        )}
         {!state.data?.connections.length && (
           <Link
             to="/settings/mcp"
@@ -322,7 +331,9 @@ export function AssistantPanel({
             >
               <div className="mb-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span className="font-medium">
-                  {message.source === "member" ? m.assistant_you() : "Codex"}
+                  {message.source === "member"
+                    ? m.assistant_you()
+                    : m.assistant_speaker()}
                 </span>
                 <time dateTime={new Date(message.createdAt).toISOString()}>
                   {formatAgo(message.createdAt)}

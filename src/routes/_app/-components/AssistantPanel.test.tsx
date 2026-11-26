@@ -123,6 +123,25 @@ test("sending waits for the final drawing handoff and only then clears the draft
   await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""))
 })
 
+test("the panel identifies the real connected executor instead of assuming Codex", async () => {
+  api.state.mockResolvedValue({
+    activeRun: run,
+    latestRun: run,
+    operations: [],
+    connections: [
+      {
+        workerId: "worker",
+        name: "OpenCode · provider/model",
+        lastSeenAt: new Date(),
+      },
+    ],
+  })
+  setup()
+  await screen.findByText("OpenCode · provider/model")
+  expect(await screen.findByText("AI connector online")).toBeTruthy()
+  expect(screen.getByRole("status").textContent).toBe("AI is working")
+})
+
 test("a failed send preserves the draft and retries the identical request ID", async () => {
   api.send.mockRejectedValueOnce(new Error("Response lost"))
   setup()
