@@ -1,17 +1,64 @@
 ---
-title: "AI assistant: work with Codex or OpenCode on a drawing"
-description: Send private instructions from an existing drawing, pause or continue your AI, and keep background work running after you close the page.
+title: "AI assistant: invite your AI to a drawing"
+description: Copy a short-lived connection invitation, let your AI edit this drawing directly, and take back the pen at any time.
 ---
 
-Open a drawing and choose **AI assistant**. Describe a change, send follow-up
-instructions, and pause, continue or cancel the task from the panel. Your AI edits
-the existing drawing and each saved change gets a receipt you can review or revert.
+Open an existing drawing and choose **AI assistant**. The app saves the complete
+scene and its images, then enables a drawing-only invitation for 24 hours. Choose
+**Copy AI instructions** and paste the Markdown into your AI conversation together
+with your drawing request. No model or model API key is configured in Excaliself.
+
+The invitation includes this instance's actual drawing URL, drawing ID, remote
+`/api/mcp` endpoint, Bearer secret, expiry and tool instructions. The application
+already serves Streamable HTTP MCP; there is no second MCP server to deploy.
+Your AI client must support registering and calling a remote MCP. Some clients
+need connection settings or a reload before the tools become available. A chat
+page without MCP/tool execution cannot connect just by reading the instructions.
+The address must be reachable from the AI's machine; localhost works only when
+the client and the application run on the same machine.
+
+## Drawing access and handing over the pen
+
+The invitation permits reading and directly changing **only this drawing**,
+under the member's current access rights. It exposes `canvas_status`,
+`canvas_read`, `canvas_heartbeat`, `canvas_commit`, `canvas_get_operation` and
+`canvas_finish`. It cannot list other drawings, read your private task chat or
+use account administration tools. Ordinary `edit_drawing` still proposes changes
+that require Apply. Keep the copied secret private; it is shown only at creation
+and the database stores only its hash. Reloading requires **New key** to copy a
+replacement. A new key immediately invalidates the old one, including clients
+that already connected. **Turn off access** revokes it; expiry also blocks later
+requests. Opening a drawing/share URL alone does not grant MCP access.
+
+**I'll draw** pauses new AI writes as soon as the server confirms the handoff.
+Earlier saved operations stay saved. You can add, drag, delete, pan and zoom in
+the same canvas. **Hand back to AI** first waits for your latest scene, settings
+and image uploads to be durably saved. The AI must read again for a fresh work
+context; old plans cannot commit after the handoff. Conflicting edits must reread
+the affected elements; unrelated human edits survive.
+
+The app can block an external client's saves, but cannot terminate an independent
+AI process or awaken an ended conversation. A client that is polling can discover
+the handoff. If your AI has finished its turn, say **continue** in that AI chat.
+Every read issues a new context, and a 60-second lease needs `canvas_heartbeat`
+at least every 20 seconds while the AI works. Another client cannot take a live
+lease; generate a new key when switching clients immediately.
+
+The panel sits beside the desktop canvas and below it on narrow screens. Closing
+the panel preserves access and leaves a compact status/control bar. **Copied**,
+**Client connected**, **AI is working** and **Saved to the drawing** mean different
+things: only a persisted operation receipt confirms a saved scene change. Revert
+uses the same 30-day conflict checks described below.
 
 Your conversation and task controls are private to your account. The resulting
 drawing edits are visible to anyone who can access that drawing. A private drawing
 stays private; starting an assistant task does not create a share link.
 
 ## Start the Codex connector
+
+For durable tasks entered in the web panel, turn off the drawing invitation to
+show the existing private task chat, then use a managed connector below. Creating
+or replacing an invitation ends the previous active task so it cannot keep the pen.
 
 The connector runs continuously on your computer or a server. It uses your Codex
 CLI login and talks to Excaliself over MCP. The Excaliself application needs no
@@ -98,7 +145,7 @@ under the account whose OpenCode model is configured.
 ## Work on an existing drawing
 
 1. Open the drawing and choose **AI assistant** (also in the editor menu on a
-   narrow screen).
+   narrow screen). Turn off drawing access to use the managed connector task chat.
 2. Send an instruction, for example “Add a cache between the API and database,
    using the same colors as the existing diagram.”
 3. The first send saves and hands the current scene to the server. You can
@@ -129,7 +176,8 @@ saving so it cannot overwrite the newer scene.
 **Pause** blocks later drawing commits as soon as the server accepts it. The
 panel shows that stopping is in progress until the connector confirms it has
 stopped the execution. An edit committed before the pause remains saved.
-**Continue** lets the connector pick up the latest instructions again.
+**Continue** saves the complete browser scene first, then lets the connector pick
+up the latest instructions again.
 
 **Cancel task** ends the task. Saved drawing changes have their own receipts and
 can be reverted. Moving a drawing or its folder to Trash also cancels its tasks.

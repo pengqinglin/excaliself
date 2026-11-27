@@ -2,11 +2,15 @@ import { and, eq, isNotNull } from "drizzle-orm"
 import type { Db } from "@/db"
 import {
   accessTokens,
+  assistantConversations,
+  assistantDrawingGrants,
   assistantEvents,
   assistantMessages,
   assistantRuns,
+  drawings,
   oauthGrants,
 } from "@/db/schema"
+import { accessibleTo } from "@/features/spaces/access"
 import {
   acknowledgementInput,
   controlInput,
@@ -57,6 +61,27 @@ export async function validCredential(
       )
       .for("share")
     if (token) return now()
+  } else if (principal.credentialKind === "drawing_grant") {
+    const [grant] = await tx
+      .select()
+      .from(assistantDrawingGrants)
+      .where(eq(assistantDrawingGrants.id, principal.credentialId))
+      .for("share")
+    const timestamp = now()
+    if (grant && !grant.revokedAt && grant.expiresAt > timestamp) {
+      const [scope] = await tx
+        .select({ id: drawings.id })
+        .from(assistantConversations)
+        .innerJoin(drawings, eq(drawings.id, assistantConversations.drawingId))
+        .where(
+          and(
+            eq(assistantConversations.id, grant.conversationId),
+            eq(assistantConversations.userId, principal.userId),
+            accessibleTo(drawings, principal.userId),
+          ),
+        )
+      if (scope) return timestamp
+    }
   } else {
     const [grant] = await tx
       .select({ expiresAt: oauthGrants.accessTokenExpiresAt })
@@ -232,6 +257,14 @@ export function createRunStore(db: Db, now: Clock) {
           input.conversationId,
         )
         const run = await lockRun(tx, conversation.id, input.runId)
+        if (
+          run.source !== "connector" ||
+          principal.credentialKind === "drawing_grant"
+        )
+          throw new AssistantError(
+            "not_found",
+            "This task is not available to this connector.",
+          )
         const timestamp = await validCredential(tx, principal, now)
         if (isTerminal(run.status))
           throw new AssistantError(

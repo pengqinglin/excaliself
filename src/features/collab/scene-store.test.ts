@@ -111,7 +111,7 @@ function fakeDb(row: { data: string | null } | undefined) {
       from: () => ({
         where: (where: SQL) => {
           calls.push({ kind: "select", where })
-          return Promise.resolve(row ? [row] : [])
+          return { for: () => Promise.resolve(row ? [row] : []) }
         },
       }),
     }),

@@ -50,7 +50,7 @@ docker run --rm -p 127.0.0.1:3000:3000 -e PREVIEW_MODE=true ghcr.io/maciekzygmun
 - **回收站**：删除的内容可从回收站恢复，满 30 天后自动永久删除。
 - **邀请制账号**：第一位访问者创建管理员账号，其他人通过邀请链接加入。
 - **连接 AI 客户端**：Claude.ai、Claude Code、Claude Desktop 等 MCP 客户端可以查找、读取、创建和导出绘图，提议修改绘图，也可以把绘图移入回收站。修改提议会显示在画布上，只有你点击 Apply（应用）后才会生效，并实时同步给绘图中的所有人。客户端通过 OAuth 授权或个人访问令牌接入，Excaliself 无需配置大语言模型（LLM）的 API 密钥。
-- **Codex 绘图助手**：在已有绘图中发送私人指令，暂停、继续或取消任务，并查看和撤回已保存的修改。[常驻连接器指南](landing/src/content/docs/ai-assistant.md)说明如何使用自己的 Codex 登录状态经 MCP 执行任务；关闭浏览器后仍可继续。从源码目录运行 `pnpm assistant:codex`，应用无需配置模型 API 密钥。
+- **单画布 AI 邀请**：打开 AI 助手，一键复制当前画布的连接说明。专用密钥默认 24 小时有效，只能直接编辑这一张图；点击“我来画”接管，交回前会保存你的最后修改。若外部 AI 对话已结束，仍需在该对话说“继续”。应用自带远程 MCP，AI 客户端须能连接该地址。[常驻 Codex／OpenCode 连接器](landing/src/content/docs/ai-assistant.md)还支持网页私人指令，关闭浏览器后仍可工作；应用无需配置模型 API 密钥。
 - **单点登录**：支持 Google Workspace、Microsoft Entra ID 和其他支持 OIDC 的身份服务（如 Okta、Authentik、Keycloak）。使用指定邮箱域名的用户可在首次登录时直接加入，无需邀请。
 - **管理员工具**：在“设置”中管理成员和角色、创建密码重置链接，并查看实例统计信息。
 - **浅色与深色主题**：也可以跟随系统设置自动切换，还可以为画布单独设置主题。

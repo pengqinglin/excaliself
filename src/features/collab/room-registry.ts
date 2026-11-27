@@ -18,8 +18,8 @@ import { loadRoomScene, saveRoomScene } from "./scene-store"
 export const rooms: RoomRegistry = processSingleton("collab-rooms", () => {
   const registry = createRoomRegistry(
     (roomId) => loadRoomScene(db, roomId),
-    (roomId, elements, settings) =>
-      saveRoomScene(db, roomId, elements, settings),
+    (roomId, elements, settings, requireImages) =>
+      saveRoomScene(db, roomId, elements, settings, requireImages),
   )
   registerShutdownFlush(() => closeAllRooms(registry))
   // Unref'd, so it never holds the process open.

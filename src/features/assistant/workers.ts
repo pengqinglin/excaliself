@@ -80,6 +80,7 @@ export function createAssistantWorkerStore(
           .where(
             and(
               eq(assistantConversations.userId, principal.userId),
+              eq(assistantRuns.source, "connector"),
               accessibleTo(drawings, principal.userId),
               isNull(drawings.deletedAt),
               isNotNull(drawings.serverManagedAt),

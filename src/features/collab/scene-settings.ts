@@ -88,6 +88,9 @@ export function createSettingsSync(
       inFlight = { requestId, patch }
   }
   return {
+    isReady: () => authoritative !== null,
+    isSettled: () =>
+      authoritative !== null && !inFlight && Object.keys(pending).length === 0,
     observe(raw: unknown) {
       const settings = parseSceneSettings(raw)
       if (!settings) return

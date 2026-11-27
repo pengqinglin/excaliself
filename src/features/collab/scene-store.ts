@@ -128,6 +128,7 @@ export async function saveRoomScene(
   drawingId: string,
   elements: SceneElement[],
   settings?: SceneSettings,
+  requireImages = false,
 ): Promise<void> {
   const now = Date.now()
   await db.transaction(async (tx) => {
@@ -135,7 +136,20 @@ export async function saveRoomScene(
       .select({ data: drawings.data })
       .from(drawings)
       .where(eq(drawings.id, drawingId))
-    if (!drawing) return
+      .for("update")
+    if (!drawing) {
+      if (requireImages) throw new Error("Drawing not found")
+      return
+    }
+    if (requireImages) {
+      const files = await tx
+        .select({ id: drawingFiles.fileId })
+        .from(drawingFiles)
+        .where(eq(drawingFiles.drawingId, drawingId))
+      const stored = new Set(files.map(({ id }) => id))
+      if ([...referencedFileIds(elements)].some((id) => !stored.has(id)))
+        throw new Error("Scene images have not finished uploading")
+    }
     await tx
       .update(drawings)
       .set({

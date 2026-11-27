@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react"
+import type { RoomBarrier } from "@/features/collab/room-session"
 import { drawingQueryOptions, drawingsQueryOptions } from "./queries"
 import { buildScenePayload } from "./scene"
 import { prepareDrawingServerWriter } from "./server"
@@ -17,7 +18,9 @@ type Hold = () => {
   drained: Promise<void>
   release: (savePending?: boolean) => void
 }
-type Activation = Extract<WriterActivation, { status: "activated" }>
+type Activation = Extract<WriterActivation, { status: "activated" }> & {
+  barrier: RoomBarrier
+}
 type DrawingWriter = { prepare: () => Promise<Activation>; preparing: boolean }
 
 export const DrawingWriterContext = createContext<DrawingWriter | null>(null)
@@ -37,6 +40,7 @@ export function usePrepareDrawingWriter(options: {
   readOnly: boolean
   onConflict: () => void
   flushImages?: () => Promise<void>
+  flushScene: () => Promise<RoomBarrier>
 }) {
   const queryClient = useQueryClient()
   const handlers = useRef(options)
@@ -96,7 +100,8 @@ export function usePrepareDrawingWriter(options: {
             row.id === drawingId ? { ...row, ...mode } : row,
           ),
         )
-        return result
+        const barrier = await handlers.current.flushScene()
+        return { ...result, barrier }
       } finally {
         held.release(!activated && !conflicted)
         inFlight.current = null

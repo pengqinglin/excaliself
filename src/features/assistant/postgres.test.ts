@@ -18,11 +18,17 @@ import {
   users,
 } from "@/db/schema"
 import { revokeAccessToken } from "@/features/access-tokens/tokens"
-import { createRoomRegistry } from "@/features/collab/room-session"
+import {
+  closeAllRooms,
+  createRoomRegistry,
+  type RoomRegistry,
+} from "@/features/collab/room-session"
 import { loadRoomScene, saveRoomScene } from "@/features/collab/scene-store"
 import { writeDrawingScene } from "@/features/drawings/scene-write"
 import { activateServerWriter } from "@/features/drawings/writer-mode"
 import { trashDrawingUnit } from "@/features/trash/trash"
+import { invitationFixture, invitationShape } from "./invitation-test-support"
+import { drawingCredentialForToken } from "./invitations"
 import { createAssistantRevertStore } from "./revert"
 import { createAssistantSceneStore } from "./scene"
 import { createAssistantStore } from "./store"
@@ -39,6 +45,7 @@ describe.skipIf(!connectionString)("PostgreSQL assistant transactions", () => {
   let pool: Pool
   let db: Db
   const memberIds: string[] = []
+  const invitationRooms: RoomRegistry[] = []
   beforeAll(async () => {
     pool = new Pool({ connectionString, max: 10 })
     db = drizzle(pool, { schema })
@@ -47,6 +54,7 @@ describe.skipIf(!connectionString)("PostgreSQL assistant transactions", () => {
   afterAll(async () => {
     if (!pool) return
     try {
+      await Promise.all(invitationRooms.map(closeAllRooms))
       if (memberIds.length > 0) {
         await db.delete(drawings).where(inArray(drawings.createdBy, memberIds))
         await db.delete(users).where(inArray(users.id, memberIds))
@@ -96,6 +104,88 @@ describe.skipIf(!connectionString)("PostgreSQL assistant transactions", () => {
       claimAndAcknowledge,
     }
   }
+
+  async function setupInvitation() {
+    const s = await invitationFixture(db)
+    memberIds.push(s.ownerId, s.otherId)
+    invitationRooms.push(s.rooms)
+    return s
+  }
+
+  test("drawing invitation: pause racing a commit permits only the serialized winner; stale plans stay fenced after resume", async () => {
+    for (let i = 0; i < 4; i++) {
+      const s = await setupInvitation()
+      const context = await s.read()
+      const edit = {
+        ...context,
+        requestId: "race",
+        summary: "Race",
+        base: {},
+        add: [{ type: "rectangle", label: "AI" }],
+      }
+      const control = { conversationId: s.conversation.id, grantId: s.grant.id }
+      const pause = () =>
+        s.invitations.control(s.ownerId, { ...control, command: "pause" })
+      const commit = () => s.scenes.commitEdit(s.worker, edit)
+      const results = await Promise.allSettled(
+        i % 2 ? [pause(), commit()] : [commit(), pause()],
+      )
+      const metadata = await s.invitations.metadata(
+        s.ownerId,
+        s.conversation.id,
+      )
+      expect(metadata?.control).toBe("paused")
+      expect(results.some((result) => result.status === "fulfilled")).toBe(true)
+      await expect(
+        s.scenes.commitEdit(s.worker, { ...edit, requestId: "late" }),
+      ).rejects.toMatchObject({ code: "stale_control" })
+      await s.frame("SCENE_UPDATE", {
+        elements: [invitationShape("last-human-stroke")],
+      })
+      await s.invitations.control(s.ownerId, {
+        ...control,
+        command: "resume",
+        barrier: await s.sync(),
+      })
+      await expect(
+        s.scenes.commitEdit(s.worker, { ...edit, requestId: "after-resume" }),
+      ).rejects.toMatchObject({ code: "stale_control" })
+      const fresh = await s.read()
+      expect(
+        (await s.scenes.readScene(s.worker, fresh)).elements.map(
+          ({ id }) => id,
+        ),
+      ).toContain("last-human-stroke")
+    }
+  })
+
+  test("drawing invitation: concurrent reads have one live client; concurrent rotation leaves only the final key valid", async () => {
+    const s = await setupInvitation()
+    const claims = await Promise.allSettled([
+      s.invitations.beginRead(s.credential, "client-a", "A"),
+      s.invitations.beginRead(s.credential, "client-b", "B"),
+    ])
+    expect(
+      claims.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1)
+    expect(claims.find((result) => result.status === "rejected")).toMatchObject(
+      { reason: { code: "run_busy" } },
+    )
+    const barrier = await s.sync()
+    const rotated = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        s.invitations.create(s.ownerId, {
+          conversationId: s.conversation.id,
+          barrier,
+        }),
+      ),
+    )
+    const valid = await Promise.all(
+      rotated.map((grant) => drawingCredentialForToken(db, grant.token)),
+    )
+    expect(valid.filter(Boolean)).toHaveLength(1)
+    expect(await drawingCredentialForToken(db, s.grant.token)).toBeNull()
+  })
 
   test("parallel opens and sends serialize to one conversation/task and contiguous messages", async () => {
     const { store, ownerId, drawingId, conversation } = await setup()

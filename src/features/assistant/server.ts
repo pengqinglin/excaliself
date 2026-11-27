@@ -5,8 +5,18 @@ import { eq } from "drizzle-orm"
 import { db } from "@/db"
 import { drawings } from "@/db/schema"
 import { rooms } from "@/features/collab/room-registry"
+import {
+  requireRoomBarrier,
+  withRoomScene,
+} from "@/features/collab/room-session"
 import { listUpdates } from "@/features/list-updates/hub"
 import { authMiddleware } from "@/middleware/auth"
+import {
+  barrierInput,
+  createInvitationStore,
+  invitationControlInput,
+  invitationInput,
+} from "./invitations"
 import { createAssistantRevertStore, revertInput } from "./revert"
 import { createAssistantSceneStore } from "./scene"
 import {
@@ -63,15 +73,16 @@ export const getAssistantPanelState = createServerFn({ method: "GET" })
   .validator(conversationInput)
   .handler(async ({ context, data }) => {
     const userId = context.session.user.id
-    const [state, operations, connections] = await Promise.all([
+    const [state, operations, connections, invitation] = await Promise.all([
       assistant.getConversation(userId, data),
       createAssistantSceneStore(db, rooms).listOperations(
         userId,
         data.conversationId,
       ),
       createAssistantWorkerStore(db).connections(userId),
+      createInvitationStore(db, rooms).metadata(userId, data.conversationId),
     ])
-    return { ...state, operations, connections }
+    return { ...state, operations, connections, invitation }
   })
 
 export const getAssistantEvents = createServerFn({ method: "GET" })
@@ -101,9 +112,34 @@ export const sendAssistantMessage = createServerFn({ method: "POST" })
 
 export const controlAssistantRun = createServerFn({ method: "POST" })
   .middleware([authMiddleware])
-  .validator(controlInput)
+  .validator(controlInput.extend({ barrier: barrierInput.optional() }))
+  .handler(async ({ context, data }) => {
+    const userId = context.session.user.id
+    if (data.command !== "resume") return assistant.controlRun(userId, data)
+    const conversation = await findConversation(db, userId, data.conversationId)
+    return withRoomScene(rooms, conversation.drawingId, async (room) => {
+      if (!data.barrier)
+        throw new AssistantError(
+          "invalid_input",
+          "Synchronize the drawing before resuming.",
+        )
+      requireRoomBarrier(room, userId, data.barrier)
+      return assistant.controlRun(userId, data)
+    })
+  })
+
+export const createDrawingInvitation = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(invitationInput)
   .handler(({ context, data }) =>
-    assistant.controlRun(context.session.user.id, data),
+    createInvitationStore(db, rooms).create(context.session.user.id, data),
+  )
+
+export const controlDrawingInvitation = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .validator(invitationControlInput)
+  .handler(({ context, data }) =>
+    createInvitationStore(db, rooms).control(context.session.user.id, data),
   )
 
 export const revertAssistantOperation = createServerFn({ method: "POST" })

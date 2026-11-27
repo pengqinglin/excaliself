@@ -15,7 +15,11 @@ export const runStatuses = [
 ] as const
 export const runControls = ["running", "paused"] as const
 export const workerStates = ["working", "paused", "awaiting_input"] as const
-export const credentialKinds = ["access_token", "oauth_grant"] as const
+export const credentialKinds = [
+  "access_token",
+  "oauth_grant",
+  "drawing_grant",
+] as const
 export const messageKinds = [
   "user",
   "assistant",

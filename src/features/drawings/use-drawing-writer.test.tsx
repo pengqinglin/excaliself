@@ -33,6 +33,10 @@ function setup(isRoom = false) {
   const release = vi.fn()
   const hold = vi.fn(() => ({ drained, release }))
   const onConflict = vi.fn()
+  const flushScene = vi.fn(async () => ({
+    connectionId: "socket",
+    requestId: "sync",
+  }))
   let elements = [{ id: "initial" }]
   const api = {
     getSceneElementsIncludingDeleted: () => elements,
@@ -48,6 +52,7 @@ function setup(isRoom = false) {
         isRoom,
         readOnly: false,
         onConflict,
+        flushScene,
       }),
     {
       wrapper: ({ children }: { children: ReactNode }) => (
@@ -61,6 +66,7 @@ function setup(isRoom = false) {
     release,
     hold,
     onConflict,
+    flushScene,
     resolve,
     edit: () => {
       elements = [{ id: "latest" }]

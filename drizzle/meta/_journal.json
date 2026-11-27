@@ -169,6 +169,13 @@
       "when": 1795595522115,
       "tag": "0023_assistant_reverts",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795687065348,
+      "tag": "0024_bright_harrier",
+      "breakpoints": true
     }
   ]
 }

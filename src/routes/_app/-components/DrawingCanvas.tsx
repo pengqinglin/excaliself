@@ -351,6 +351,7 @@ export function DrawingCanvas({
     readOnly,
     onConflict: () => setWriterConflict(true),
     flushImages: room.flushUploads,
+    flushScene: room.flushScene,
   })
 
   // Any move to Team or Duplicate flushes this canvas first, whichever menu
@@ -412,204 +413,210 @@ export function DrawingCanvas({
 
   return (
     <DrawingWriterContext.Provider value={drawingWriter}>
-      <div className="@container/canvas relative size-full">
-        <Excalidraw
-          initialData={getInitialData}
-          excalidrawAPI={setExcalidrawAPI}
-          // Controlled: the canvas renders in the app theme, and a theme baked
-          // into the saved scene state is ignored on load. With the prop set,
-          // Excalidraw disables its toggleTheme action, which also retires the
-          // Shift+Alt+D shortcut; `toggleTheme: false` pins that down.
-          theme={canvasTheme}
-          langCode={getLocale()}
-          viewModeEnabled={readOnly || undefined}
-          onChange={handleSceneChange}
-          onPointerUpdate={readOnly ? undefined : room.onPointerUpdate}
-          onScrollChange={readOnly ? undefined : room.onScrollChange}
-          onLibraryChange={handleLibraryChange}
-          renderTopRightUI={
-            readOnly
-              ? undefined
-              : () => (
-                  <>
-                    <PresenceAvatars room={room} className={PRESENCE_CLASS} />
-                    <Button
-                      onClick={toggleAssistant}
-                      aria-label={m.assistant_title()}
-                      aria-pressed={assistantOpen}
-                      title={m.assistant_title()}
-                      className={SHARE_BUTTON_CLASS}
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                      <span className={SHARE_LABEL_CLASS}>
-                        {m.assistant_title()}
-                      </span>
-                    </Button>
-                    <CommentsButton
-                      drawingId={drawingId}
-                      active={commentsOpen}
-                      onClick={toggleComments}
-                      className={SHARE_BUTTON_CLASS}
-                    />
-                    <Button
-                      data-tour="share"
-                      onClick={() => setShareOpen(true)}
-                      aria-label={m.drawing_share()}
-                      title={m.drawing_share()}
-                      className={SHARE_BUTTON_CLASS}
-                    >
-                      <Share2Icon className="h-3.5 w-3.5" />
-                      <span className={SHARE_LABEL_CLASS}>
-                        {m.drawing_share()}
-                      </span>
-                      {share && <SharingDot />}
-                    </Button>
-                  </>
-                )
-          }
-          UIOptions={{
-            canvasActions: {
-              loadScene: false,
-              saveToActiveFile: false,
-              toggleTheme: false,
-            },
-          }}
-        >
-          <MainMenu>
-            <MenuReconnecting
-              status={room.connectionStatus}
-              className={PRESENCE_MENU_ROW_CLASS}
-            />
-            <MenuParticipants room={room} className={PRESENCE_MENU_ROW_CLASS} />
-            <MainMenu.Item
-              icon={<PanelLeftIcon className="h-4 w-4" />}
-              onSelect={toggleSidebar}
-            >
-              {m.drawing_menu_drawings()}
-            </MainMenu.Item>
-            {!readOnly && (
-              <MainMenu.Item
-                className={SHARE_MENU_ITEM_CLASS}
-                icon={<Sparkles className="h-4 w-4" />}
-                onSelect={toggleAssistant}
-              >
-                {m.assistant_title()}
-              </MainMenu.Item>
-            )}
-            {!readOnly && (
-              <MainMenu.Item
-                className={SHARE_MENU_ITEM_CLASS}
-                icon={<Share2Icon className="h-4 w-4" />}
-                onSelect={() => setShareOpen(true)}
-              >
-                <span className="inline-flex items-center gap-1.5">
-                  {m.drawing_share()}
-                  {share != null && <SharingDot />}
-                </span>
-              </MainMenu.Item>
-            )}
-            <MainMenu.Item
-              // Read-only canvases have no top-right bar, so the menu is the way in.
-              className={readOnly ? undefined : SHARE_MENU_ITEM_CLASS}
-              icon={<MessageSquareIcon className="h-4 w-4" />}
-              onSelect={toggleComments}
-            >
-              {m.comments_title()}
-            </MainMenu.Item>
-            {!readOnly && !isTeam && requestMoveToTeam && (
-              <MainMenu.Item
-                icon={<Users className="h-4 w-4" />}
-                onSelect={() =>
-                  requestMoveToTeam(
-                    { type: "drawing", id: drawingId },
-                    drawing.name,
+      <div className="relative flex size-full min-h-0 min-w-0 flex-col md:flex-row">
+        <div className="@container/canvas relative min-h-0 min-w-0 flex-1">
+          <Excalidraw
+            initialData={getInitialData}
+            excalidrawAPI={setExcalidrawAPI}
+            // Controlled: the canvas renders in the app theme, and a theme baked
+            // into the saved scene state is ignored on load. With the prop set,
+            // Excalidraw disables its toggleTheme action, which also retires the
+            // Shift+Alt+D shortcut; `toggleTheme: false` pins that down.
+            theme={canvasTheme}
+            langCode={getLocale()}
+            viewModeEnabled={readOnly || undefined}
+            onChange={handleSceneChange}
+            onPointerUpdate={readOnly ? undefined : room.onPointerUpdate}
+            onScrollChange={readOnly ? undefined : room.onScrollChange}
+            onLibraryChange={handleLibraryChange}
+            renderTopRightUI={
+              readOnly
+                ? undefined
+                : () => (
+                    <>
+                      <PresenceAvatars room={room} className={PRESENCE_CLASS} />
+                      <Button
+                        onClick={toggleAssistant}
+                        aria-label={m.assistant_title()}
+                        aria-pressed={assistantOpen}
+                        title={m.assistant_title()}
+                        className={SHARE_BUTTON_CLASS}
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span className={SHARE_LABEL_CLASS}>
+                          {m.assistant_title()}
+                        </span>
+                      </Button>
+                      <CommentsButton
+                        drawingId={drawingId}
+                        active={commentsOpen}
+                        onClick={toggleComments}
+                        className={SHARE_BUTTON_CLASS}
+                      />
+                      <Button
+                        data-tour="share"
+                        onClick={() => setShareOpen(true)}
+                        aria-label={m.drawing_share()}
+                        title={m.drawing_share()}
+                        className={SHARE_BUTTON_CLASS}
+                      >
+                        <Share2Icon className="h-3.5 w-3.5" />
+                        <span className={SHARE_LABEL_CLASS}>
+                          {m.drawing_share()}
+                        </span>
+                        {share && <SharingDot />}
+                      </Button>
+                    </>
                   )
-                }
-              >
-                {m.drawing_menu_move_to_team()}
-              </MainMenu.Item>
-            )}
-            <MainMenu.Separator />
-            <MainMenu.DefaultItems.LoadScene />
-            <MainMenu.DefaultItems.SaveToActiveFile />
-            <MainMenu.DefaultItems.Export />
-            <MainMenu.DefaultItems.SaveAsImage />
-            <MainMenu.DefaultItems.SearchMenu />
-            <MainMenu.DefaultItems.Help />
-            <MainMenu.DefaultItems.ClearCanvas />
-            <MainMenu.Separator />
-            <MainMenu.Group title={m.drawing_menu_excalidraw_links()}>
-              <MainMenu.DefaultItems.Socials />
-            </MainMenu.Group>
-            <MainMenu.Separator />
-            <MainMenu.DefaultItems.ChangeCanvasBackground />
-          </MainMenu>
-          {/* No autosave in read-only mode, so no save status to report. */}
-          {!readOnly && (
-            <FooterRightPortal>
-              <ReconnectingIndicator
+            }
+            UIOptions={{
+              canvasActions: {
+                loadScene: false,
+                saveToActiveFile: false,
+                toggleTheme: false,
+              },
+            }}
+          >
+            <MainMenu>
+              <MenuReconnecting
                 status={room.connectionStatus}
-                className="order-first mr-2 h-auto self-stretch"
+                className={PRESENCE_MENU_ROW_CLASS}
               />
-              <SaveStatusPill saving={saving} saved={saved} />
-            </FooterRightPortal>
+              <MenuParticipants
+                room={room}
+                className={PRESENCE_MENU_ROW_CLASS}
+              />
+              <MainMenu.Item
+                icon={<PanelLeftIcon className="h-4 w-4" />}
+                onSelect={toggleSidebar}
+              >
+                {m.drawing_menu_drawings()}
+              </MainMenu.Item>
+              {!readOnly && (
+                <MainMenu.Item
+                  className={SHARE_MENU_ITEM_CLASS}
+                  icon={<Sparkles className="h-4 w-4" />}
+                  onSelect={toggleAssistant}
+                >
+                  {m.assistant_title()}
+                </MainMenu.Item>
+              )}
+              {!readOnly && (
+                <MainMenu.Item
+                  className={SHARE_MENU_ITEM_CLASS}
+                  icon={<Share2Icon className="h-4 w-4" />}
+                  onSelect={() => setShareOpen(true)}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    {m.drawing_share()}
+                    {share != null && <SharingDot />}
+                  </span>
+                </MainMenu.Item>
+              )}
+              <MainMenu.Item
+                // Read-only canvases have no top-right bar, so the menu is the way in.
+                className={readOnly ? undefined : SHARE_MENU_ITEM_CLASS}
+                icon={<MessageSquareIcon className="h-4 w-4" />}
+                onSelect={toggleComments}
+              >
+                {m.comments_title()}
+              </MainMenu.Item>
+              {!readOnly && !isTeam && requestMoveToTeam && (
+                <MainMenu.Item
+                  icon={<Users className="h-4 w-4" />}
+                  onSelect={() =>
+                    requestMoveToTeam(
+                      { type: "drawing", id: drawingId },
+                      drawing.name,
+                    )
+                  }
+                >
+                  {m.drawing_menu_move_to_team()}
+                </MainMenu.Item>
+              )}
+              <MainMenu.Separator />
+              <MainMenu.DefaultItems.LoadScene />
+              <MainMenu.DefaultItems.SaveToActiveFile />
+              <MainMenu.DefaultItems.Export />
+              <MainMenu.DefaultItems.SaveAsImage />
+              <MainMenu.DefaultItems.SearchMenu />
+              <MainMenu.DefaultItems.Help />
+              <MainMenu.DefaultItems.ClearCanvas />
+              <MainMenu.Separator />
+              <MainMenu.Group title={m.drawing_menu_excalidraw_links()}>
+                <MainMenu.DefaultItems.Socials />
+              </MainMenu.Group>
+              <MainMenu.Separator />
+              <MainMenu.DefaultItems.ChangeCanvasBackground />
+            </MainMenu>
+            {/* No autosave in read-only mode, so no save status to report. */}
+            {!readOnly && (
+              <FooterRightPortal>
+                <ReconnectingIndicator
+                  status={room.connectionStatus}
+                  className="order-first mr-2 h-auto self-stretch"
+                />
+                <SaveStatusPill saving={saving} saved={saved} />
+              </FooterRightPortal>
+            )}
+            <TopLeftPortal>
+              <TopLeftControls
+                // `key` resets the uncontrolled input when the cached drawing name
+                // changes from outside (e.g., rename triggered in the sidebar).
+                key={drawing.name}
+                initialName={drawing.name}
+                readOnly={readOnly}
+                onToggleSidebar={toggleSidebar}
+                onSubmit={handleNameSubmit}
+              />
+            </TopLeftPortal>
+          </Excalidraw>
+          <FollowModeOverlay room={room} />
+          {writerConflict && (
+            <div
+              role="alert"
+              className="absolute bottom-12 left-4 z-40 max-w-sm rounded-lg border border-destructive/30 bg-background p-3 text-sm shadow-lg"
+            >
+              <p>{m.assistant_handoff_conflict()}</p>
+              <Button
+                size="sm"
+                className="mt-2"
+                onClick={() => window.location.reload()}
+              >
+                {m.assistant_reload()}
+              </Button>
+            </div>
           )}
-          <TopLeftPortal>
-            <TopLeftControls
-              // `key` resets the uncontrolled input when the cached drawing name
-              // changes from outside (e.g., rename triggered in the sidebar).
-              key={drawing.name}
-              initialName={drawing.name}
-              readOnly={readOnly}
-              onToggleSidebar={toggleSidebar}
-              onSubmit={handleNameSubmit}
+          <CommentsLayer
+            drawingId={drawingId}
+            excalidrawAPI={excalidrawAPI}
+            readOnly={readOnly}
+            panelOpen={commentsOpen}
+            onPanelOpenChange={setCommentsOpen}
+          />
+          {!readOnly && (
+            <DrawingEditCard
+              drawingId={drawingId}
+              excalidrawAPI={excalidrawAPI}
+              theme={canvasTheme}
             />
-          </TopLeftPortal>
-        </Excalidraw>
-        <FollowModeOverlay room={room} />
+          )}
+          {!readOnly && (
+            <ShareDialog
+              drawingId={drawingId}
+              isTeam={isTeam}
+              open={shareOpen}
+              onOpenChange={setShareOpen}
+              onBeforeCreate={flushAutoSave}
+            />
+          )}
+        </div>
         {!readOnly && (
           <AssistantPanel
             drawingId={drawingId}
             open={assistantOpen}
+            onOpen={() => setAssistantOpen(true)}
             onClose={() => setAssistantOpen(false)}
-          />
-        )}
-        {writerConflict && (
-          <div
-            role="alert"
-            className="absolute bottom-12 left-4 z-40 max-w-sm rounded-lg border border-destructive/30 bg-background p-3 text-sm shadow-lg"
-          >
-            <p>{m.assistant_handoff_conflict()}</p>
-            <Button
-              size="sm"
-              className="mt-2"
-              onClick={() => window.location.reload()}
-            >
-              {m.assistant_reload()}
-            </Button>
-          </div>
-        )}
-        <CommentsLayer
-          drawingId={drawingId}
-          excalidrawAPI={excalidrawAPI}
-          readOnly={readOnly}
-          panelOpen={commentsOpen}
-          onPanelOpenChange={setCommentsOpen}
-        />
-        {!readOnly && (
-          <DrawingEditCard
-            drawingId={drawingId}
-            excalidrawAPI={excalidrawAPI}
-            theme={canvasTheme}
-          />
-        )}
-        {!readOnly && (
-          <ShareDialog
-            drawingId={drawingId}
-            isTeam={isTeam}
-            open={shareOpen}
-            onOpenChange={setShareOpen}
-            onBeforeCreate={flushAutoSave}
           />
         )}
       </div>

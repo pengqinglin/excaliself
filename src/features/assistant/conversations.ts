@@ -15,7 +15,7 @@ import {
   pageInput,
   parseInput,
 } from "./schemas"
-import { leaseIsLive } from "./state"
+import { AssistantError, leaseIsLive } from "./state"
 import {
   activeRun,
   appendEvent,
@@ -165,6 +165,11 @@ export function createConversationStore(db: Db, now: Clock) {
         }
         const timestamp = now()
         let run = await activeRun(tx, conversation.id)
+        if (run?.source === "invitation")
+          throw new AssistantError(
+            "run_busy",
+            "Give drawing instructions in the connected AI conversation, or close its invitation first.",
+          )
         if (!run) {
           ;[run] = await tx
             .insert(assistantRuns)

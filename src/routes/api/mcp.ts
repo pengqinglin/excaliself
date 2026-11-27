@@ -10,6 +10,12 @@ import { createMcpHandler } from "@modelcontextprotocol/server"
 import { createFileRoute } from "@tanstack/react-router"
 import { db } from "@/db"
 import { memberForToken } from "@/features/access-tokens/tokens"
+import { createInvitationMcpServer } from "@/features/assistant/invitation-mcp"
+import {
+  type DrawingCredential,
+  drawingCredentialForToken,
+} from "@/features/assistant/invitations"
+import { rooms } from "@/features/collab/room-registry"
 import { createMcpServer, type Member } from "@/features/mcp/tools"
 import {
   originOf,
@@ -17,14 +23,18 @@ import {
 } from "@/features/oauth/endpoints"
 import { memberForOAuthToken } from "@/features/oauth/grants"
 
-type Caller = { member: Member; origin: string }
+type Caller =
+  | { member: Member; origin: string }
+  | { drawingCredential: DrawingCredential }
 
 // Stateless: every request gets a fresh server for the member it carries.
 const handler = createMcpHandler(({ authInfo }) => {
   // mcpHandler always passes authInfo, so a missing one is a bug.
   if (!authInfo?.extra) throw new Error("MCP request without a caller")
-  const { member, origin } = authInfo.extra as Caller
-  return createMcpServer(db, member, origin)
+  const caller = authInfo.extra as Caller
+  return "drawingCredential" in caller
+    ? createInvitationMcpServer(db, caller.drawingCredential, rooms)
+    : createMcpServer(db, caller.member, caller.origin)
 })
 
 // RFC 9728 §5.1. error="invalid_token" only when a token was sent (RFC 6750).
@@ -53,6 +63,16 @@ export async function mcpHandler(request: Request): Promise<Response> {
     .get("authorization")
     ?.match(/^Bearer\s+(\S+)$/i)?.[1]
   if (!token) return unauthorized(origin, false)
+  const drawingCredential = await drawingCredentialForToken(db, token)
+  if (drawingCredential)
+    return handler.fetch(request, {
+      authInfo: {
+        token,
+        clientId: "drawing-invitation",
+        scopes: [],
+        extra: { drawingCredential } satisfies Caller,
+      },
+    })
   const staticMember = await memberForToken(db, token)
   const member = staticMember ?? (await memberForOAuthToken(db, token))
   if (!member) return unauthorized(origin, true)

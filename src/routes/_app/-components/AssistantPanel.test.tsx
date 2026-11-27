@@ -11,6 +11,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import type { AssistantRun } from "@/features/assistant/types"
 import { AssistantPanel } from "./AssistantPanel"
 
+vi.mock("./DrawingInvitation", () => ({ DrawingInvitation: () => null }))
+
 const api = vi.hoisted(() => ({
   open: vi.fn(),
   state: vi.fn(),
@@ -68,7 +70,12 @@ function setup() {
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   )
   const view = render(
-    <AssistantPanel drawingId="drawing" open onClose={close} />,
+    <AssistantPanel
+      drawingId="drawing"
+      open
+      onClose={close}
+      onOpen={vi.fn()}
+    />,
     { wrapper },
   )
   return { client, close, ...view }
@@ -76,6 +83,7 @@ function setup() {
 const run: AssistantRun = {
   id: "run",
   conversationId: "conversation",
+  source: "connector",
   status: "running",
   control: "running",
   controlVersion: 1,

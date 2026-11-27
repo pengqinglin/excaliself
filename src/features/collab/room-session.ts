@@ -53,6 +53,7 @@ export type SceneSaver = (
   roomId: string,
   elements: SceneElement[],
   settings?: SceneSettings,
+  requireImages?: boolean,
 ) => Promise<void>
 
 /** Trailing write delay; a crash loses at most this much from the db. */
@@ -68,6 +69,8 @@ export type Seat = {
   shareKey?: string
   /** Last frame time, for the ghost sweep. */
   lastSeenAt: number
+  lastSyncRequestId?: string | null
+  sceneRejected?: boolean
 }
 
 export type Room = {
@@ -104,6 +107,25 @@ export type RoomRegistry = {
   now: () => number
   /** Set on shutdown: joins are refused from then on. */
   closing: boolean
+}
+
+export type RoomBarrier = { connectionId: string; requestId: string }
+
+/** Only a durable sync from this member's currently seated browser can authorize a handoff. */
+export function requireRoomBarrier(
+  room: Room,
+  userId: string,
+  barrier: RoomBarrier,
+) {
+  const seat = room.seats.get(barrier.connectionId)
+  if (
+    !seat ||
+    seat.userId !== userId ||
+    seat.lastSyncRequestId !== barrier.requestId
+  )
+    throw new Error(
+      "Synchronize this browser's complete scene before handing it to AI.",
+    )
 }
 
 export function createRoomRegistry(
@@ -588,7 +610,7 @@ function applySceneUpdate(
   peer: RoomPeer,
   delta: SceneElement[],
   now: number,
-): boolean {
+): boolean | null {
   const previous = room.elements
   const previousById = new Map(previous.map((el) => [el.id, el]))
   const newest = previous.reduce((max, el) => Math.max(max, el.version), 0)
@@ -611,7 +633,7 @@ function applySceneUpdate(
     grows &&
     (merged.length > MAX_ROOM_ELEMENTS || bytes > MAX_ROOM_SCENE_BYTES)
   )
-    return false
+    return null
   room.elements = merged
   room.bytes = bytes
 
@@ -706,10 +728,15 @@ export async function receiveFromPeer(
       if (!room.seats.has(peer.id)) return "evicted"
       return serializeRoom(room, async () => {
         if (!room.seats.has(peer.id)) return "evicted"
-        if (
-          applySceneUpdate(room, peer, message.payload.elements, registry.now())
+        seat.lastSyncRequestId = null
+        const changed = applySceneUpdate(
+          room,
+          peer,
+          message.payload.elements,
+          registry.now(),
         )
-          markDirty(registry, room)
+        if (changed === null) seat.sceneRejected = true
+        if (changed) markDirty(registry, room)
         return "ok"
       })
 
@@ -720,6 +747,7 @@ export async function receiveFromPeer(
         if (!room.seats.has(peer.id)) return "evicted"
         if (!room.serverManaged) return "ok"
         const { baseRevision, requestId, appState } = message.payload
+        seat.lastSyncRequestId = null
         const accepted = baseRevision === room.settingsRevision
         if (
           accepted &&
@@ -741,6 +769,39 @@ export async function receiveFromPeer(
             requestId,
             accepted,
           },
+        })
+        return "ok"
+      })
+    }
+
+    case "SCENE_SYNC": {
+      await room.loaded
+      return serializeRoom(room, async () => {
+        if (!room.seats.has(peer.id)) return "evicted"
+        let saved = false
+        seat.lastSyncRequestId = null
+        try {
+          if (seat.sceneRejected)
+            throw new Error("A scene frame exceeded the room limit")
+          // Unlike trailing flush/PONG this propagates failure and confirms all
+          // previously queued deltas, settings and referenced image bytes are durable.
+          await registry.saveScene(
+            room.id,
+            room.elements,
+            room.serverManaged ? room.settings : undefined,
+            true,
+          )
+          room.dirty = false
+          disarmFlush(room)
+          seat.lastSyncRequestId = message.payload.requestId
+          saved = true
+        } catch {
+          seat.sceneRejected = false
+          markDirty(registry, room)
+        }
+        peer.send({
+          type: "SCENE_SYNCED",
+          payload: { requestId: message.payload.requestId, saved },
         })
         return "ok"
       })

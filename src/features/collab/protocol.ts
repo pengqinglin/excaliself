@@ -67,6 +67,7 @@ export type ClientMessage =
   /** A delta of changed elements. */
   | { type: "SCENE_UPDATE"; payload: { elements: SceneElement[] } }
   | { type: "SCENE_STATE"; payload: SettingsUpdate }
+  | { type: "SCENE_SYNC"; payload: { requestId: string } }
   /** Who this tab is following now; null when it stopped. */
   | { type: "USER_FOLLOW"; payload: { followedConnectionId: string | null } }
   /** Sent only while someone is following this tab. */
@@ -90,6 +91,7 @@ export type ServerMessage =
       payload: { elements: SceneElement[]; settings?: SettingsState }
     }
   | { type: "SCENE_STATE"; payload: SettingsState }
+  | { type: "SCENE_SYNCED"; payload: { requestId: string; saved: boolean } }
   /** Changed elements; the Room's copy wherever the incoming one lost. */
   | { type: "SCENE_UPDATE"; payload: { elements: SceneElement[] } }
   /** Who is following this tab. */
@@ -210,6 +212,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(decoded)) return null
 
   if (decoded.type === "PING") return { type: "PING", payload: {} }
+  if (decoded.type === "SCENE_SYNC") {
+    const id = isRecord(decoded.payload) ? decoded.payload.requestId : null
+    return typeof id === "string" && id.length > 0 && id.length <= 128
+      ? { type: "SCENE_SYNC", payload: { requestId: id } }
+      : null
+  }
 
   if (decoded.type === "JOIN") {
     if (!isRecord(decoded.payload)) return null
@@ -312,6 +320,15 @@ export function parseServerMessage(raw: string): ServerMessage | null {
   const payload = decoded.payload
 
   if (decoded.type === "PONG") return { type: "PONG", payload: {} }
+  if (decoded.type === "SCENE_SYNCED") {
+    return typeof payload.requestId === "string" &&
+      typeof payload.saved === "boolean"
+      ? {
+          type: "SCENE_SYNCED",
+          payload: { requestId: payload.requestId, saved: payload.saved },
+        }
+      : null
+  }
 
   if (decoded.type === "ROOM_JOINED" || decoded.type === "PARTICIPANTS") {
     const participants = parseParticipants(payload.participants)

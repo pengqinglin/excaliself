@@ -2,13 +2,16 @@
 // created it or it lives in Team. Every server module that reads or writes
 // drawings or folders goes through here; none checks createdBy itself.
 
-import { eq, type SQL, sql } from "drizzle-orm"
+import { eq, type SQL, type SQLWrapper, sql } from "drizzle-orm"
 import type { drawings, folders, Space } from "@/db/schema"
 
 type SpacedTable = typeof drawings | typeof folders
 
 /** Where condition: rows of `table` that `userId` can see and act on. */
-export function accessibleTo(table: SpacedTable, userId: string): SQL {
+export function accessibleTo(
+  table: SpacedTable,
+  userId: string | SQLWrapper,
+): SQL {
   return sql`(${eq(table.createdBy, userId)} or ${eq(table.space, "team")})`
 }
 

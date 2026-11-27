@@ -30,6 +30,7 @@ import {
   ROOM_FULL_CLOSE_CODE,
   SCENE_UNREADABLE_CLOSE_CODE,
 } from "./protocol"
+import type { RoomBarrier } from "./room-session"
 import { type RoomPath, roomSocketUrl } from "./room-url"
 import { createSettingsSync } from "./scene-settings"
 import {
@@ -97,6 +98,15 @@ export function useRoom(options: {
   const pointersRef = useRef(new Map<string, PointerUpdate>())
   const participantsRef = useRef<Participant[]>([])
   const selfConnectionIdRef = useRef<string | null>(null)
+  const syncRequests = useRef(
+    new Map<
+      string,
+      {
+        resolve: (barrier: RoomBarrier) => void
+        reject: (error: Error) => void
+      }
+    >(),
+  )
   // Refs keep the socket effect keyed on the room only; a rename must not reconnect.
   const apiRef = useRef(excalidrawAPI)
   apiRef.current = excalidrawAPI
@@ -231,6 +241,9 @@ export function useRoom(options: {
 
   /** Runs on every close: the room may have restarted, so "seen" state is stale. */
   const forgetConnection = useCallback(() => {
+    for (const request of syncRequests.current.values())
+      request.reject(new Error("The room disconnected during handoff"))
+    syncRequests.current.clear()
     selfConnectionIdRef.current = null
     setSelfConnectionId(null)
     pointersRef.current.clear()
@@ -283,6 +296,21 @@ export function useRoom(options: {
           case "PONG":
             ownBeat.acknowledge()
             return
+
+          case "SCENE_SYNCED": {
+            const pending = syncRequests.current.get(message.payload.requestId)
+            syncRequests.current.delete(message.payload.requestId)
+            if (message.payload.saved && selfConnectionIdRef.current)
+              pending?.resolve({
+                connectionId: selfConnectionIdRef.current,
+                requestId: message.payload.requestId,
+              })
+            else
+              pending?.reject(
+                new Error("The complete scene could not be saved"),
+              )
+            return
+          }
 
           case "ROOM_JOINED":
             // Not on `open`: a server that accepts and then drops the socket
@@ -422,6 +450,54 @@ export function useRoom(options: {
     () => participants.filter((p) => p.connectionId !== selfConnectionId),
     [participants, selfConnectionId],
   )
+
+  const flushScene = useCallback(async (): Promise<RoomBarrier> => {
+    const deadline = Date.now() + 15_000
+    const wait = async (ready: () => boolean) => {
+      while (!ready()) {
+        if (Date.now() >= deadline)
+          throw new Error(
+            "Timed out waiting for complete scene synchronization",
+          )
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+    }
+    await wait(
+      () => sceneInitializedRef.current && !!settingsRef.current?.isReady(),
+    )
+    const socket = socketRef.current
+    await flushUploads()
+    const api = apiRef.current
+    if (!api || !socket) throw new Error("The room is unavailable")
+    settingsRef.current?.observe(api.getAppState())
+    await wait(() => !!settingsRef.current?.isSettled())
+    if (socket !== socketRef.current || socket.readyState !== WebSocket.OPEN)
+      throw new Error("The room connection changed during handoff")
+    const requestId = crypto.randomUUID()
+    const pending = new Promise<RoomBarrier>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        syncRequests.current.delete(requestId)
+        reject(new Error("Timed out saving the complete scene"))
+      }, 15_000)
+      syncRequests.current.set(requestId, {
+        resolve: (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+      })
+    })
+    // One socket preserves this full scene -> sync ordering. Server ACK waits
+    // on the same serial queue used by human deltas and assistant commits.
+    sendScene(
+      broadcasterRef.current.full(api.getSceneElementsIncludingDeleted()),
+    )
+    send({ type: "SCENE_SYNC", payload: { requestId } })
+    return pending
+  }, [flushUploads, sendScene, send])
   // Null until the join lands.
   const self = useMemo(
     () => participants.find((p) => p.connectionId === selfConnectionId) ?? null,
@@ -447,5 +523,6 @@ export function useRoom(options: {
     toggleFollow: follow.toggleFollow,
     stopFollowing: follow.stopFollowing,
     flushUploads,
+    flushScene,
   }
 }

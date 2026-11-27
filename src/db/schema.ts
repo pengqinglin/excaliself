@@ -494,6 +494,9 @@ export const assistantRuns = pgTable(
     conversationId: text("conversationId")
       .notNull()
       .references(() => assistantConversations.id, { onDelete: "cascade" }),
+    source: text("source", { enum: ["connector", "invitation"] })
+      .notNull()
+      .default("connector"),
     status: text("status", { enum: runStatuses }).notNull().default("queued"),
     control: text("control", { enum: runControls })
       .notNull()
@@ -532,7 +535,7 @@ export const assistantRuns = pgTable(
       .where(sql`${table.status} in ('queued', 'running', 'awaiting_input')`),
     validState: check(
       "assistant_runs_state",
-      sql`${table.status} in ('queued', 'running', 'awaiting_input', 'completed', 'failed', 'cancelled') and ${table.control} in ('running', 'paused')`,
+      sql`${table.status} in ('queued', 'running', 'awaiting_input', 'completed', 'failed', 'cancelled') and ${table.control} in ('running', 'paused') and ${table.source} in ('connector', 'invitation')`,
     ),
     versions: check(
       "assistant_runs_versions",
@@ -547,12 +550,41 @@ export const assistantRuns = pgTable(
       sql`(
       (${table.workerId} is null and ${table.credentialKind} is null and ${table.credentialId} is null and ${table.workerState} is null and ${table.leaseGeneration} = 0 and ${table.leaseExpiresAt} is null)
       or
-      (${table.workerId} is not null and ${table.credentialId} is not null and ${table.credentialKind} is not null and ${table.credentialKind} in ('access_token', 'oauth_grant') and ${table.workerState} is not null and ${table.workerState} in ('working', 'paused', 'awaiting_input') and ${table.leaseGeneration} > 0)
+      (${table.workerId} is not null and ${table.credentialId} is not null and ${table.credentialKind} is not null and ${table.credentialKind} in ('access_token', 'oauth_grant', 'drawing_grant') and ${table.workerState} is not null and ${table.workerState} in ('working', 'paused', 'awaiting_input') and ${table.leaseGeneration} > 0)
     )`,
     ),
     finished: check(
       "assistant_runs_finished",
       sql`(${table.finishedAt} is not null) = (${table.status} in ('completed', 'failed', 'cancelled'))`,
+    ),
+  }),
+)
+
+/** Short-lived, revocable authority for one member's one drawing. Never stores the secret. */
+export const assistantDrawingGrants = pgTable(
+  "assistant_drawing_grants",
+  {
+    id: text("id").primaryKey(),
+    conversationId: text("conversationId")
+      .notNull()
+      .references(() => assistantConversations.id, { onDelete: "cascade" }),
+    tokenHash: text("tokenHash").notNull().unique(),
+    createdAt: timestamp("createdAt").notNull(),
+    expiresAt: timestamp("expiresAt").notNull(),
+    revokedAt: timestamp("revokedAt"),
+    lastSeenAt: timestamp("lastSeenAt"),
+    clientName: text("clientName"),
+    control: text("control", { enum: runControls })
+      .notNull()
+      .default("running"),
+  },
+  (table) => ({
+    active: uniqueIndex("assistant_drawing_grants_active")
+      .on(table.conversationId)
+      .where(sql`${table.revokedAt} is null`),
+    valid: check(
+      "assistant_drawing_grants_valid",
+      sql`${table.expiresAt} > ${table.createdAt} and ${table.control} in ('running', 'paused')`,
     ),
   }),
 )
